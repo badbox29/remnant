@@ -98,12 +98,26 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .nav-panel.open ~ .topbar .nav-toggle-bar:nth-child(2) { opacity: 0; }
 .nav-panel.open ~ .topbar .nav-toggle-bar:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
+.brand-logo {
+  height: 36px;
+  width: auto;
+  display: block;
+}
+
 .brand {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: 1.3rem;
   letter-spacing: .01em;
   color: var(--ink);
+}
+
+.brand-version {
+  font-size: .68rem;
+  font-weight: 600;
+  color: var(--muted);
+  align-self: flex-end;
+  margin-bottom: .15rem; /* nudges it to sit near the wordmark's baseline, not its cap */
 }
 
 .topbar-actions { display: flex; align-items: center; gap: .6rem; }
