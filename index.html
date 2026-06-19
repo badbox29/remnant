@@ -40,21 +40,24 @@
      ════════════════════════════════════════════════════════════ -->
 <main class="main-layout">
 
-  <!-- Nav panel — Books > Chapters > Notes tree, plus Unfiled Notes.
+  <!-- Nav panel — Corpora > Scrolls > Remnants tree, plus Unfiled Remnants.
        Pop-out (overlay) by default, or pinned (claims layout space) per
        the user's saved preference — see isPinnedActive() in app.js. Pinned
        mode is overridden back to pop-out below NAV_PIN_MIN_WIDTH (860px,
        matching Refectory's documented fold-open/tablet breakpoint) without
-       altering the stored preference itself. -->
+       altering the stored preference itself.
+       Note: internal class/id names (book/chapter/note, nav-row-book, etc.)
+       are unchanged from the data model — only user-visible copy uses the
+       new vocabulary. See README for the full terminology mapping. -->
   <nav class="nav-panel" id="nav-panel">
     <div class="nav-panel-header">
       <span class="nav-panel-title">Library</span>
       <button class="nav-pin-btn" id="nav-pin-btn" title="Pin panel" aria-label="Pin panel">📌</button>
-      <button class="btn btn-sm btn-ghost" id="nav-new-book-btn" title="New Book">+ Book</button>
+      <button class="btn btn-sm btn-ghost" id="nav-new-book-btn" title="New Corpus">+ Corpus</button>
     </div>
     <div class="nav-tree" id="nav-tree">
-      <!-- Rendered by app.js: books, each with chapters, each with notes;
-           plus a persistent "Unfiled Notes" section at the end. -->
+      <!-- Rendered by app.js: corpora, each with scrolls, each with remnants;
+           plus a persistent "Unfiled Remnants" section at the end. -->
     </div>
   </nav>
   <div class="nav-panel-scrim" id="nav-panel-scrim"></div>
@@ -65,7 +68,7 @@
       <!-- Tabs are rendered here by app.js: one per open note, plus a "+" new-note tab -->
     </div>
     <div class="note-editor">
-      <input class="note-title-input" id="note-title-input" placeholder="Untitled note" />
+      <input class="note-title-input" id="note-title-input" placeholder="Untitled remnant" />
       <textarea class="note-body-input" id="note-body-input" placeholder="Start writing…"></textarea>
     </div>
   </section>
@@ -137,7 +140,7 @@
 
           <!-- Guest section -->
           <div id="settings-guest-section">
-            <p class="f13 lh muted">You're using Remnant as a guest. Create a free account to sync your notes across devices.</p>
+            <p class="f13 lh muted">You're using Remnant as a guest. Create a free account to sync your remnants across devices.</p>
           </div>
 
           <!-- Token section -->
