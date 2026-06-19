@@ -63,7 +63,40 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   padding: .75rem 1.25rem;
   border-bottom: 1px solid var(--border);
   background: var(--paper);
+  position: relative;
+  z-index: 50;
 }
+
+.topbar-left { display: flex; align-items: center; gap: .75rem; }
+
+.nav-toggle-btn {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.nav-toggle-btn:hover { background: var(--paper-dark); }
+.nav-toggle-bar {
+  display: block;
+  width: 18px;
+  height: 2px;
+  margin: 0 auto;
+  background: var(--ink);
+  border-radius: 1px;
+  transition: transform .18s, opacity .18s;
+}
+/* When the panel is open, morph the three bars into an "x" — a small,
+   specific signature for the one interactive control that owns the tree. */
+.nav-panel.open ~ .topbar .nav-toggle-bar:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-panel.open ~ .topbar .nav-toggle-bar:nth-child(2) { opacity: 0; }
+.nav-panel.open ~ .topbar .nav-toggle-bar:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
 .brand {
   font-family: var(--font-display);
@@ -114,6 +147,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .main-layout {
   display: flex;
   height: calc(100vh - 57px);
+  position: relative; /* anchors the pop-out nav panel */
 }
 
 .notes-column {
@@ -135,6 +169,143 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 @media (max-width: 800px) {
   .main-layout { flex-direction: column; height: auto; }
   .scratchpad-column { width: 100%; border-top: 1px solid var(--border); }
+}
+
+/* ── Nav panel (Books > Chapters > Notes + Unfiled) ─────────────────
+   Pops out as an overlay over the layout rather than permanently
+   reflowing it — a notes tool's primary real estate is the page being
+   written, not the table of contents, so the tree borrows space only
+   when it's wanted. */
+
+.nav-panel {
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 300px;
+  background: var(--paper);
+  border-right: 1px solid var(--border);
+  box-shadow: 6px 0 24px rgba(43,40,35,.12);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform .2s ease;
+  z-index: 40;
+}
+.nav-panel.open { transform: translateX(0); }
+
+.nav-panel-scrim {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(43,40,35,.18);
+  z-index: 35;
+}
+.nav-panel.open + .nav-panel-scrim { display: block; }
+
+.nav-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .85rem 1rem;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.nav-panel-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.02rem;
+  color: var(--brass-dark);
+}
+
+.nav-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: .4rem 0 1rem;
+}
+
+/* Tree rows — one shared base class, indentation by level via padding. */
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: .35rem;
+  padding: .38rem .75rem;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  font-size: .88rem;
+}
+.nav-row:hover { background: var(--paper-dark); }
+.nav-row.active { background: var(--paper-dark); font-weight: 600; color: var(--brass-dark); }
+
+.nav-row-book    { padding-left: .75rem; font-weight: 600; }
+.nav-row-chapter { padding-left: 1.85rem; }
+.nav-row-note    { padding-left: 2.95rem; }
+.nav-row-unfiled-header { padding-left: .75rem; font-weight: 600; color: var(--muted); margin-top: .5rem; }
+
+.nav-row-caret {
+  width: 14px;
+  flex-shrink: 0;
+  font-size: .7rem;
+  color: var(--muted);
+  transition: transform .15s;
+  text-align: center;
+}
+.nav-row-caret.expanded { transform: rotate(90deg); }
+.nav-row-caret.placeholder { visibility: hidden; } /* notes have no children — keep alignment without a caret */
+
+.nav-row-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-row-add {
+  font-size: .8rem;
+  color: var(--brass);
+  font-style: italic;
+}
+.nav-row-add:hover { color: var(--brass-dark); }
+
+.nav-row-actions {
+  display: none;
+  gap: .3rem;
+  flex-shrink: 0;
+}
+.nav-row:hover .nav-row-actions { display: flex; }
+.nav-row-action-btn {
+  font-size: .75rem;
+  color: var(--muted);
+  padding: .1rem .3rem;
+  border-radius: var(--r-sm);
+}
+.nav-row-action-btn:hover { color: var(--red); background: var(--border); }
+
+/* Drag-and-drop visual feedback */
+.nav-row[draggable="true"] { cursor: grab; }
+.nav-row.dragging { opacity: .4; }
+
+.nav-row.drop-target-into {
+  outline: 2px solid var(--brass);
+  outline-offset: -2px;
+  background: var(--paper-dark);
+}
+.nav-row.drop-line-above::before,
+.nav-row.drop-line-below::after {
+  content: '';
+  position: absolute;
+  left: .5rem; right: .5rem;
+  height: 2px;
+  background: var(--brass);
+  border-radius: 2px;
+}
+.nav-row.drop-line-above::before { top: 0; }
+.nav-row.drop-line-below::after  { bottom: 0; }
+
+.nav-empty-hint {
+  padding: .4rem 2.95rem;
+  font-size: .8rem;
+  color: var(--muted);
+  font-style: italic;
 }
 
 /* ── Tabs ────────────────────────────────────────────────────────── */
@@ -225,31 +396,6 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   color: var(--ink);
 }
 .note-body-input::placeholder { color: var(--muted); opacity: .6; }
-
-/* ── Notes list (collapsed by default) ──────────────────────────── */
-
-.notes-list-toggle {
-  padding: .4rem 1rem;
-  border-top: 1px solid var(--border);
-}
-
-.notes-list {
-  max-height: 240px;
-  overflow-y: auto;
-  border-top: 1px solid var(--border);
-  padding: .4rem 0;
-}
-
-.notes-list-item {
-  padding: .5rem 1.25rem;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  gap: .75rem;
-}
-.notes-list-item:hover { background: var(--paper-dark); }
-.notes-list-item-title { font-weight: 500; }
-.notes-list-item-date { color: var(--muted); font-size: .8rem; flex-shrink: 0; }
 
 /* ── Scratchpad ──────────────────────────────────────────────────── */
 
