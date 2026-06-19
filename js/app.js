@@ -53,10 +53,14 @@ function defaultData() {
       activeId: null,
     },
     // Nav panel UI state — which books/chapters are expanded, whether the
-    // panel itself is open. Persisted because losing your place in the
-    // tree on every reload would undercut the point of having one.
+    // panel itself is open, and whether it's pinned (claims layout space)
+    // or pop-out (overlays the layout). Persisted because losing your
+    // place in the tree on every reload would undercut the point of having
+    // one, and because "pinned" is a workflow preference worth remembering
+    // across devices via KV sync just like everything else in this object.
     navState: {
       panelOpen:        false,
+      pinned:           false,
       expandedBookIds:    [],
       expandedChapterIds: [],
     },
@@ -78,6 +82,7 @@ function mergeData(raw) {
     navState: (raw.navState && typeof raw.navState === 'object')
       ? {
           panelOpen:          !!raw.navState.panelOpen,
+          pinned:             !!raw.navState.pinned,
           expandedBookIds:    Array.isArray(raw.navState.expandedBookIds)    ? raw.navState.expandedBookIds    : [],
           expandedChapterIds: Array.isArray(raw.navState.expandedChapterIds) ? raw.navState.expandedChapterIds : [],
         }
@@ -588,17 +593,82 @@ async function reorderBook(bookId, targetOrder) {
   markDirty();
 }
 
-// ─── Nav panel: expand/collapse + open/closed state ────────────────
+// ─── Nav panel: expand/collapse + open/closed + pinned state ───────
+//
+// Three concepts, deliberately kept distinct:
+//   isPanelOpen()   — is the panel currently visible at all
+//   isPinned()      — the user's STORED preference (pinned vs pop-out)
+//   isPinnedActive() — whether pinned behavior actually applies right now,
+//                      i.e. the stored preference AND the viewport is wide
+//                      enough to honor it. Below NAV_PIN_MIN_WIDTH, pinned
+//                      mode is overridden back to pop-out at runtime —
+//                      WITHOUT mutating the stored preference. A Galaxy
+//                      Fold 5 user gets pop-out on the ~370px outer screen
+//                      and their real pinned layout back the instant they
+//                      unfold to the wider inner screen; nothing about
+//                      their saved choice is touched by the override.
+//
+// Pin and open are LINKED (not independent): pinning always opens the
+// panel; unpinning always closes it. There's no "pinned but closed" state
+// to represent, so none is modeled.
+//
+// Breakpoint rationale: 860px matches the documented Galaxy Fold 5 /
+// tablet breakpoint already established in the Refectory stylesheet this
+// auth/layout pattern was ported from — fold-open width is exactly the
+// case where claiming a further 300px for a pinned panel starts being
+// genuinely cramped rather than merely cozy.
+const NAV_PIN_MIN_WIDTH = 860;
 
-function isPanelOpen()         { return !!App.data.navState.panelOpen; }
+function isPanelOpen()  { return !!App.data.navState.panelOpen; }
+function isPinned()     { return !!App.data.navState.pinned; }
+function isPinnedActive() { return isPinned() && window.innerWidth >= NAV_PIN_MIN_WIDTH; }
+
 function isBookExpanded(id)    { return App.data.navState.expandedBookIds.includes(id); }
 function isChapterExpanded(id) { return App.data.navState.expandedChapterIds.includes(id); }
 
 function setPanelOpen(open) {
   App.data.navState.panelOpen = open;
   saveLocal();
-  document.getElementById('nav-panel').classList.toggle('open', open);
+  applyNavPanelDOMState();
 }
+
+function setPinned(pinned) {
+  App.data.navState.pinned = pinned;
+  // Linked behavior, per design: pinning opens, unpinning closes.
+  App.data.navState.panelOpen = pinned;
+  markDirty(); // pin preference is KV-synced, unlike pure ephemeral UI state
+  applyNavPanelDOMState();
+}
+
+// applyNavPanelDOMState() — the single place that reconciles stored state
+// + current viewport width into actual DOM classes. CSS can't read JS
+// state directly, so this is the bridge: it runs on every state change
+// AND on window resize, so crossing the NAV_PIN_MIN_WIDTH threshold while
+// the page is open (e.g. unfolding a Fold 5) re-evaluates immediately
+// rather than only at next load.
+function applyNavPanelDOMState() {
+  const panel = document.getElementById('nav-panel');
+  const scrim = document.getElementById('nav-panel-scrim');
+  const layout = document.querySelector('.main-layout');
+  if (!panel || !layout) return;
+
+  const open = isPanelOpen();
+  const pinnedActive = isPinnedActive();
+
+  panel.classList.toggle('open', open);
+  layout.classList.toggle('nav-pinned', open && pinnedActive);
+  // Scrim only makes sense in pop-out mode — pinned mode doesn't cover
+  // anything, so there's nothing to dismiss-by-clicking-outside.
+  if (scrim) scrim.style.display = (open && !pinnedActive) ? '' : 'none';
+
+  const pinBtn = document.getElementById('nav-pin-btn');
+  if (pinBtn) {
+    pinBtn.classList.toggle('active', isPinned());
+    pinBtn.title = isPinned() ? 'Unpin panel' : 'Pin panel';
+  }
+}
+
+window.addEventListener('resize', applyNavPanelDOMState);
 
 function setBookExpanded(id, expanded) {
   const list = App.data.navState.expandedBookIds;
@@ -616,8 +686,16 @@ function setChapterExpanded(id, expanded) {
   saveLocal();
 }
 
-document.getElementById('nav-toggle-btn')?.addEventListener('click', () => setPanelOpen(!isPanelOpen()));
+document.getElementById('nav-toggle-btn')?.addEventListener('click', () => {
+  // The hamburger only makes sense as an independent open/close control
+  // when NOT pinned — when pinned, the panel's presence is governed by
+  // the pin state itself, so toggling "open" while pinned would just be
+  // immediately fighting the linked pinned→open invariant.
+  if (isPinned()) return;
+  setPanelOpen(!isPanelOpen());
+});
 document.getElementById('nav-panel-scrim')?.addEventListener('click', () => setPanelOpen(false));
+document.getElementById('nav-pin-btn')?.addEventListener('click', () => setPinned(!isPinned()));
 
 document.getElementById('nav-new-book-btn')?.addEventListener('click', async () => {
   const id = await createBook('Untitled Book');
@@ -1244,7 +1322,7 @@ async function renderAll() {
 
   await loadNavData();
   renderNavTree();
-  document.getElementById('nav-panel')?.classList.toggle('open', isPanelOpen());
+  applyNavPanelDOMState();
 
   renderTabs();
   renderActiveNote();
@@ -1363,13 +1441,19 @@ async function boot() {
   const stored = ls.get(STORAGE_KEY);
   App.data     = stored ? mergeData(stored) : defaultData();
 
-  // First-run default: open on wide viewports (the tree is genuinely useful
-  // screen real estate to spend on a desktop-sized window), closed on
-  // narrow ones (a notes tool's primary space should be the page being
-  // written, especially on a phone-width screen). Only applied when there's
-  // no stored preference yet — a returning user's explicit choice always wins.
+  // First-run default: open AND pinned on wide viewports (a desktop-sized
+  // window has room to spare, and a pinned tree reads as part of the
+  // workspace rather than a transient overlay); closed on narrow ones (a
+  // notes tool's primary space should be the page being written, especially
+  // on a phone-width screen). Uses the same NAV_PIN_MIN_WIDTH threshold as
+  // the runtime pinned-mode override, so the first-run choice and the
+  // ongoing responsive behavior agree on what counts as "wide enough."
+  // Only applied when there's no stored preference yet — a returning
+  // user's explicit choice always wins over this default.
   if (!stored) {
-    App.data.navState.panelOpen = window.innerWidth >= 1000;
+    const wide = window.innerWidth >= NAV_PIN_MIN_WIDTH;
+    App.data.navState.panelOpen = wide;
+    App.data.navState.pinned    = wide;
   }
 
   const googleClientId = await fetchGoogleClientId();
