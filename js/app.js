@@ -25,6 +25,15 @@ const App = {
   openNotes: {},         // in-memory cache of notes currently open in tabs: { [id]: note }
   activeNoteId: null,
   syncCheckTimer: null,
+  // In-memory cache of the structure tree (Books/Chapters), rebuilt from
+  // IndexedDB on boot and after any structural edit. Note CONTENT is never
+  // cached wholesale here — only the lightweight book/chapter records and
+  // enough note metadata (id, title, chapterId, order, updatedAt) to render
+  // the tree without loading every note body into memory at once.
+  books: {},
+  chapters: {},
+  noteSummaries: {},     // { [id]: { id, title, chapterId, order, updatedAt } } — for tree rendering
+  drag: null,            // transient drag state, see "Drag and drop" section
 };
 
 // Default data shape (localStorage). Note CONTENT is never stored here —
@@ -43,6 +52,14 @@ function defaultData() {
       openIds:  [],   // ordered array of note ids currently open as tabs
       activeId: null,
     },
+    // Nav panel UI state — which books/chapters are expanded, whether the
+    // panel itself is open. Persisted because losing your place in the
+    // tree on every reload would undercut the point of having one.
+    navState: {
+      panelOpen:        false,
+      expandedBookIds:    [],
+      expandedChapterIds: [],
+    },
     lastSyncTime: 0,      // epoch ms of last successful KV push
     pendingSync:  false,  // true when local content has changed since lastSyncTime
     lastModified: Date.now(),
@@ -58,6 +75,13 @@ function mergeData(raw) {
     tabState: (raw.tabState && typeof raw.tabState === 'object')
       ? { openIds: Array.isArray(raw.tabState.openIds) ? raw.tabState.openIds : [], activeId: raw.tabState.activeId ?? null }
       : d.tabState,
+    navState: (raw.navState && typeof raw.navState === 'object')
+      ? {
+          panelOpen:          !!raw.navState.panelOpen,
+          expandedBookIds:    Array.isArray(raw.navState.expandedBookIds)    ? raw.navState.expandedBookIds    : [],
+          expandedChapterIds: Array.isArray(raw.navState.expandedChapterIds) ? raw.navState.expandedChapterIds : [],
+        }
+      : d.navState,
   };
 }
 
@@ -101,18 +125,21 @@ function getWorkerUrl() {
 }
 
 // assembleSyncPayload() — gathers localStorage metadata + IndexedDB note
-// content + scratchpad into the one JSON blob that goes to KV. This is the
-// piece that doesn't exist in the Refectory pattern: there, everything
-// synced was already in one synchronous object. Here, content lives in
-// IndexedDB, so building the payload is async.
+// content + structure (books/chapters) + scratchpad into the one JSON blob
+// that goes to KV. This is the piece that doesn't exist in the Refectory
+// pattern: there, everything synced was already in one synchronous object.
+// Here, content lives in IndexedDB, so building the payload is async.
 async function assembleSyncPayload() {
-  const [notes, scratchpad] = await Promise.all([
+  const [notes, books, chapters, scratchpad] = await Promise.all([
     NotesStore.getAll(),
+    NotesStore.getAllBooks(),
+    NotesStore.getAllChapters(),
     NotesStore.getScratchpad(),
   ]);
   return {
     ...App.data,
     notes,
+    structure: { books, chapters },
     scratchpad: scratchpad || { content: '', updatedAt: 0 },
   };
 }
@@ -168,11 +195,13 @@ async function pullFromWorker() {
     if (migratedTo) {
       const j = await res.json();
       const remote = j.value ?? j;
-      const { notes, scratchpad, ...metadata } = remote;
+      const { notes, structure, scratchpad, ...metadata } = remote;
       const migrated = Auth.handlePullMigration(migratedTo, mergeData(metadata));
       App.data = migrated;
       await Promise.all([
         NotesStore.replaceAll(notes || {}),
+        NotesStore.replaceAllBooks((structure && structure.books) || {}),
+        NotesStore.replaceAllChapters((structure && structure.chapters) || {}),
         NotesStore.setScratchpad((scratchpad && scratchpad.content) || ''),
       ]);
       saveLocal();
@@ -281,15 +310,26 @@ function generateNoteId() {
   return 'n_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-async function createNote() {
+// createNote(chapterId) — chapterId is optional; omitted/null means the
+// note starts unfiled. Called both from the tab bar's "+" (always unfiled)
+// and from the nav tree's "+ New Note" row under a specific chapter.
+async function createNote(chapterId = null) {
   const id = generateNoteId();
-  const note = { id, title: '', content: '', createdAt: Date.now(), updatedAt: Date.now() };
+  const siblingNotes = Object.values(App.noteSummaries).filter(n => n.chapterId === chapterId);
+  const order = nextOrder(siblingNotes);
+  const note = { id, chapterId, title: '', content: '', order, createdAt: Date.now(), updatedAt: Date.now() };
   await NotesStore.set(id, note);
   App.openNotes[id] = note;
+  App.noteSummaries[id] = { id, title: '', chapterId, order, updatedAt: note.updatedAt };
+  if (chapterId && App.chapters[chapterId]) {
+    App.chapters[chapterId].noteIds.push(id);
+    await NotesStore.setChapter(chapterId, App.chapters[chapterId]);
+  }
   App.data.tabState.openIds.push(id);
   setActiveNote(id);
   markDirty();
   renderTabs();
+  renderNavTree();
 }
 
 async function openNoteInTab(id) {
@@ -304,6 +344,7 @@ async function openNoteInTab(id) {
   setActiveNote(id);
   markDirty();
   renderTabs();
+  revealNoteInNavTree(id);
 }
 
 function setActiveNote(id) {
@@ -325,10 +366,18 @@ async function closeTab(id) {
 }
 
 async function deleteNote(id) {
+  const summary = App.noteSummaries[id];
+  if (summary?.chapterId && App.chapters[summary.chapterId]) {
+    const chapter = App.chapters[summary.chapterId];
+    chapter.noteIds = chapter.noteIds.filter(nid => nid !== id);
+    await NotesStore.setChapter(chapter.id, chapter);
+  }
   await NotesStore.delete(id);
   delete App.openNotes[id];
+  delete App.noteSummaries[id];
   await closeTab(id);
-  renderNotesList();
+  markDirty();
+  renderNavTree();
 }
 
 // Debounced autosave-to-IndexedDB on every keystroke. This is the first
@@ -348,8 +397,13 @@ async function saveActiveNote() {
   note.content   = document.getElementById('note-body-input').value;
   note.updatedAt = Date.now();
   await NotesStore.set(id, note);
+  if (App.noteSummaries[id]) {
+    App.noteSummaries[id].title     = note.title;
+    App.noteSummaries[id].updatedAt = note.updatedAt;
+  }
   markDirty();
-  renderTabs(); // tab title may have changed
+  renderTabs();    // tab title may have changed
+  renderNavTree();  // nav row label may have changed
 }
 
 // ─── Scratchpad ─────────────────────────────────────────────────────
@@ -369,7 +423,261 @@ async function loadScratchpad() {
   document.getElementById('scratchpad-input').value = (pad && pad.content) || '';
 }
 
+// ─── Books & Chapters: data operations ─────────────────────────────
+// "Unfiled Notes" is deliberately NOT a Book/Chapter record — it's just
+// the set of notes whose chapterId is null. See notesStore.js header.
+
+function generateId(prefix) {
+  return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// nextOrder(siblings) — siblings is an array of records that already carry
+// an `order` field. New items get appended to the end of their container.
+function nextOrder(siblings) {
+  if (!siblings.length) return 0;
+  return Math.max(...siblings.map(s => s.order || 0)) + 1;
+}
+
+async function createBook(name) {
+  const id = generateId('b');
+  const existingBooks = Object.values(App.books);
+  const book = {
+    id, name: name || 'Untitled Book', description: '',
+    chapterIds: [], order: nextOrder(existingBooks),
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  await NotesStore.setBook(id, book);
+  App.books[id] = book;
+  setBookExpanded(id, true); // a freshly created book opens expanded — it's empty, show the "+ New Chapter" row right away
+  markDirty();
+  renderNavTree();
+  return id;
+}
+
+async function createChapter(bookId, name) {
+  const book = App.books[bookId];
+  if (!book) return null;
+  const id = generateId('c');
+  const existingChapters = Object.values(App.chapters).filter(c => c.bookId === bookId);
+  const chapter = {
+    id, bookId, name: name || 'Untitled Chapter', description: '',
+    noteIds: [], order: nextOrder(existingChapters),
+    createdAt: Date.now(), updatedAt: Date.now(),
+  };
+  await NotesStore.setChapter(id, chapter);
+  App.chapters[id] = chapter;
+  book.chapterIds.push(id);
+  book.updatedAt = Date.now();
+  await NotesStore.setBook(bookId, book);
+  setChapterExpanded(id, true);
+  markDirty();
+  renderNavTree();
+  return id;
+}
+
+// renameBook/renameChapter — small, focused setters rather than a generic
+// "update" function, since name is the one field the nav UI edits inline.
+async function renameBook(id, name) {
+  const book = App.books[id];
+  if (!book) return;
+  book.name = name;
+  book.updatedAt = Date.now();
+  await NotesStore.setBook(id, book);
+  markDirty();
+  renderNavTree();
+}
+
+async function renameChapter(id, name) {
+  const chapter = App.chapters[id];
+  if (!chapter) return;
+  chapter.name = name;
+  chapter.updatedAt = Date.now();
+  await NotesStore.setChapter(id, chapter);
+  markDirty();
+  renderNavTree();
+}
+
+// deleteBook/deleteChapter — deleting a container does NOT delete its
+// contents; chapters/notes inside become unfiled-equivalent (chapterId/
+// bookId cleared) rather than being destroyed. Silent data loss on a
+// structural delete would be a much worse failure mode than "where did
+// my chapter go — oh, it's back in Unfiled."
+async function deleteChapter(id) {
+  const chapter = App.chapters[id];
+  if (!chapter) return;
+  const book = App.books[chapter.bookId];
+
+  // Orphan this chapter's notes back to unfiled rather than deleting them.
+  const affectedNotes = Object.values(App.noteSummaries).filter(n => n.chapterId === id);
+  for (const n of affectedNotes) {
+    const note = await NotesStore.get(n.id);
+    if (note) {
+      note.chapterId = null;
+      note.updatedAt = Date.now();
+      await NotesStore.set(n.id, note);
+      App.noteSummaries[n.id] = { ...App.noteSummaries[n.id], chapterId: null };
+      if (App.openNotes[n.id]) App.openNotes[n.id].chapterId = null;
+    }
+  }
+
+  await NotesStore.deleteChapter(id);
+  delete App.chapters[id];
+  if (book) {
+    book.chapterIds = book.chapterIds.filter(cid => cid !== id);
+    book.updatedAt = Date.now();
+    await NotesStore.setBook(book.id, book);
+  }
+  markDirty();
+  renderNavTree();
+  renderTabs(); // tab tooltips may reference the deleted chapter
+}
+
+async function deleteBook(id) {
+  const book = App.books[id];
+  if (!book) return;
+  // Orphan every chapter's notes, then remove the chapters, then the book.
+  for (const chapterId of [...book.chapterIds]) {
+    await deleteChapter(chapterId); // handles note-orphaning per chapter
+  }
+  await NotesStore.deleteBook(id);
+  delete App.books[id];
+  markDirty();
+  renderNavTree();
+}
+
+// moveNoteToChapter(noteId, chapterId|null, targetIndex) — the core of
+// drag-and-drop for notes. chapterId null means "move to Unfiled."
+async function moveNoteToChapter(noteId, chapterId, targetOrder) {
+  const note = await NotesStore.get(noteId);
+  if (!note) return;
+  note.chapterId = chapterId;
+  note.order = targetOrder;
+  note.updatedAt = Date.now();
+  await NotesStore.set(noteId, note);
+  App.noteSummaries[noteId] = { id: noteId, title: note.title, chapterId, order: targetOrder, updatedAt: note.updatedAt };
+  if (App.openNotes[noteId]) { App.openNotes[noteId].chapterId = chapterId; App.openNotes[noteId].order = targetOrder; }
+  markDirty();
+}
+
+async function moveChapterToBook(chapterId, bookId, targetOrder) {
+  const chapter = App.chapters[chapterId];
+  if (!chapter) return;
+  const oldBook = App.books[chapter.bookId];
+  if (oldBook) {
+    oldBook.chapterIds = oldBook.chapterIds.filter(id => id !== chapterId);
+    await NotesStore.setBook(oldBook.id, oldBook);
+  }
+  chapter.bookId = bookId;
+  chapter.order  = targetOrder;
+  chapter.updatedAt = Date.now();
+  await NotesStore.setChapter(chapterId, chapter);
+  const newBook = App.books[bookId];
+  if (newBook && !newBook.chapterIds.includes(chapterId)) {
+    newBook.chapterIds.push(chapterId);
+    await NotesStore.setBook(bookId, newBook);
+  }
+  markDirty();
+}
+
+async function reorderBook(bookId, targetOrder) {
+  const book = App.books[bookId];
+  if (!book) return;
+  book.order = targetOrder;
+  book.updatedAt = Date.now();
+  await NotesStore.setBook(bookId, book);
+  markDirty();
+}
+
+// ─── Nav panel: expand/collapse + open/closed state ────────────────
+
+function isPanelOpen()         { return !!App.data.navState.panelOpen; }
+function isBookExpanded(id)    { return App.data.navState.expandedBookIds.includes(id); }
+function isChapterExpanded(id) { return App.data.navState.expandedChapterIds.includes(id); }
+
+function setPanelOpen(open) {
+  App.data.navState.panelOpen = open;
+  saveLocal();
+  document.getElementById('nav-panel').classList.toggle('open', open);
+}
+
+function setBookExpanded(id, expanded) {
+  const list = App.data.navState.expandedBookIds;
+  const i = list.indexOf(id);
+  if (expanded && i === -1) list.push(id);
+  if (!expanded && i !== -1) list.splice(i, 1);
+  saveLocal();
+}
+
+function setChapterExpanded(id, expanded) {
+  const list = App.data.navState.expandedChapterIds;
+  const i = list.indexOf(id);
+  if (expanded && i === -1) list.push(id);
+  if (!expanded && i !== -1) list.splice(i, 1);
+  saveLocal();
+}
+
+document.getElementById('nav-toggle-btn')?.addEventListener('click', () => setPanelOpen(!isPanelOpen()));
+document.getElementById('nav-panel-scrim')?.addEventListener('click', () => setPanelOpen(false));
+
+document.getElementById('nav-new-book-btn')?.addEventListener('click', async () => {
+  const id = await createBook('Untitled Book');
+  // Immediately offer to rename — a brand new book with no name yet is the
+  // one moment an inline-rename prompt is welcome rather than intrusive.
+  startInlineRename('book', id);
+});
+
+// ─── Loading the tree from IndexedDB ───────────────────────────────
+
+// loadNavData() — populates App.books/App.chapters/App.noteSummaries from
+// IndexedDB. Note summaries deliberately exclude `content` — the tree only
+// ever needs id/title/chapterId/order/updatedAt to render, and pulling full
+// note bodies into memory for every note just to draw the tree would scale
+// badly for anyone with a large note collection.
+async function loadNavData() {
+  const [books, chapters, allNotes] = await Promise.all([
+    NotesStore.getAllBooks(),
+    NotesStore.getAllChapters(),
+    NotesStore.getAll(),
+  ]);
+  App.books    = books;
+  App.chapters = chapters;
+  App.noteSummaries = {};
+  for (const [id, note] of Object.entries(allNotes)) {
+    App.noteSummaries[id] = {
+      id, title: note.title, chapterId: note.chapterId ?? null,
+      order: note.order || 0, updatedAt: note.updatedAt || 0,
+    };
+  }
+}
+
+// ─── Inline rename (used for both new-book and new-chapter naming) ─
+
+function startInlineRename(kind, id) {
+  // Deferred to renderNavTree: after the next render, find the row's label
+  // and swap it for a text input. Simpler than threading rename-mode state
+  // through the render function itself for what's a rare, short-lived UI mode.
+  App._pendingRename = { kind, id };
+  renderNavTree();
+}
+
+function commitInlineRename(kind, id, value) {
+  const name = (value || '').trim() || (kind === 'book' ? 'Untitled Book' : 'Untitled Chapter');
+  if (kind === 'book') renameBook(id, name);
+  else renameChapter(id, name);
+}
+
 // ─── Rendering ──────────────────────────────────────────────────────
+
+// notePath(noteId) — returns "Book Name / Chapter Name" for a filed note,
+// or "Unfiled Notes" for one that isn't. Used for the tab hover tooltip.
+function notePath(noteId) {
+  const summary = App.noteSummaries[noteId];
+  if (!summary || !summary.chapterId) return 'Unfiled Notes';
+  const chapter = App.chapters[summary.chapterId];
+  if (!chapter) return 'Unfiled Notes';
+  const book = App.books[chapter.bookId];
+  return book ? `${book.name} / ${chapter.name}` : chapter.name;
+}
 
 function noteTabLabel(note) {
   const t = (note?.title || '').trim();
@@ -385,6 +693,7 @@ function renderTabs() {
     if (!note) return;
     const tab = document.createElement('div');
     tab.className = 'tab' + (id === App.activeNoteId ? ' active' : '');
+    tab.title = notePath(id); // hover tooltip: which book/chapter this note lives in
     tab.innerHTML = `<span class="tab-label"></span><span class="tab-close">&times;</span>`;
     tab.querySelector('.tab-label').textContent = noteTabLabel(note);
     tab.addEventListener('click', (e) => {
@@ -393,6 +702,7 @@ function renderTabs() {
       } else {
         setActiveNote(id);
         renderTabs();
+        revealNoteInNavTree(id); // clicking a tab also expands/highlights its spot in the nav
       }
     });
     bar.appendChild(tab);
@@ -402,8 +712,496 @@ function renderTabs() {
   newTab.className = 'tab-new';
   newTab.textContent = '+';
   newTab.title = 'New note';
-  newTab.addEventListener('click', createNote);
+  newTab.addEventListener('click', () => createNote());
   bar.appendChild(newTab);
+}
+
+// ─── Nav tree rendering ─────────────────────────────────────────────
+//
+// Tree shape:
+//   Book (sorted by order)
+//     "+ New Chapter" row — always first, pinned, regardless of how many
+//      chapters already exist (so it's never something you have to scroll
+//      past everything else to find)
+//     Chapter (sorted by order)
+//       "+ New Note" row — always first under an expanded chapter, same
+//        pinning rationale as New Chapter
+//       Note (sorted by order)
+//   "Unfiled Notes" — always rendered, even when empty, so it reads as a
+//    real, permanent part of the structure rather than a vanishing edge case
+
+function sortByOrder(arr) {
+  return [...arr].sort((a, b) => (a.order || 0) - (b.order || 0));
+}
+
+function renderNavTree() {
+  const treeEl = document.getElementById('nav-tree');
+  treeEl.innerHTML = '';
+
+  const books = sortByOrder(Object.values(App.books));
+  books.forEach(book => treeEl.appendChild(buildBookRow(book)));
+
+  // Unfiled Notes — a view over notes with chapterId === null, not a
+  // Book/Chapter record. Always rendered, even with zero notes in it.
+  treeEl.appendChild(buildUnfiledSection());
+}
+
+function buildBookRow(book) {
+  const wrap = document.createElement('div');
+  wrap.className = 'nav-book-wrap';
+
+  const row = document.createElement('div');
+  row.className = 'nav-row nav-row-book' + (App._pendingRename?.kind === 'book' && App._pendingRename.id === book.id ? '' : '');
+  row.dataset.kind = 'book';
+  row.dataset.id = book.id;
+  row.draggable = true;
+
+  const expanded = isBookExpanded(book.id);
+  row.innerHTML = `
+    <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
+    <span class="nav-row-label"></span>
+    <span class="nav-row-actions">
+      <span class="nav-row-action-btn" data-action="delete-book" title="Delete book">🗑</span>
+    </span>
+  `;
+
+  if (App._pendingRename?.kind === 'book' && App._pendingRename.id === book.id) {
+    renderInlineRenameInput(row, 'book', book.id, book.name);
+  } else {
+    row.querySelector('.nav-row-label').textContent = book.name;
+  }
+
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action]')) return; // handled separately below
+    if (App._pendingRename) return; // don't toggle while renaming
+    setBookExpanded(book.id, !expanded);
+    renderNavTree();
+  });
+
+  row.querySelector('[data-action="delete-book"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (confirm(`Delete "${book.name}"? Chapters and notes inside will move to Unfiled Notes.`)) {
+      deleteBook(book.id);
+    }
+  });
+
+  row.addEventListener('dblclick', () => startInlineRename('book', book.id));
+
+  attachDragHandlers(row, { kind: 'book', id: book.id, containerKind: 'root', containerId: null });
+
+  wrap.appendChild(row);
+
+  if (expanded) {
+    const childWrap = document.createElement('div');
+    childWrap.className = 'nav-book-children';
+
+    // Pinned "+ New Chapter" row — always first, before any real chapter.
+    const addRow = document.createElement('div');
+    addRow.className = 'nav-row nav-row-chapter nav-row-add';
+    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Chapter</span>`;
+    addRow.addEventListener('click', async () => {
+      const id = await createChapter(book.id, 'Untitled Chapter');
+      if (id) startInlineRename('chapter', id);
+    });
+    childWrap.appendChild(addRow);
+
+    const chapters = sortByOrder(Object.values(App.chapters).filter(c => c.bookId === book.id));
+    chapters.forEach(chapter => childWrap.appendChild(buildChapterRow(chapter)));
+
+    attachContainerDropHandlers(childWrap, { kind: 'chapter-list', bookId: book.id });
+    wrap.appendChild(childWrap);
+  }
+
+  return wrap;
+}
+
+function buildChapterRow(chapter) {
+  const wrap = document.createElement('div');
+  wrap.className = 'nav-chapter-wrap';
+
+  const row = document.createElement('div');
+  row.className = 'nav-row nav-row-chapter';
+  row.dataset.kind = 'chapter';
+  row.dataset.id = chapter.id;
+  row.draggable = true;
+
+  const expanded = isChapterExpanded(chapter.id);
+  row.innerHTML = `
+    <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
+    <span class="nav-row-label"></span>
+    <span class="nav-row-actions">
+      <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete chapter">🗑</span>
+    </span>
+  `;
+
+  if (App._pendingRename?.kind === 'chapter' && App._pendingRename.id === chapter.id) {
+    renderInlineRenameInput(row, 'chapter', chapter.id, chapter.name);
+  } else {
+    row.querySelector('.nav-row-label').textContent = chapter.name;
+  }
+
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action]')) return;
+    if (App._pendingRename) return;
+    setChapterExpanded(chapter.id, !expanded);
+    renderNavTree();
+  });
+
+  row.querySelector('[data-action="delete-chapter"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (confirm(`Delete "${chapter.name}"? Notes inside will move to Unfiled Notes.`)) {
+      deleteChapter(chapter.id);
+    }
+  });
+
+  row.addEventListener('dblclick', () => startInlineRename('chapter', chapter.id));
+
+  attachDragHandlers(row, { kind: 'chapter', id: chapter.id, containerKind: 'book', containerId: chapter.bookId });
+
+  wrap.appendChild(row);
+
+  if (expanded) {
+    const childWrap = document.createElement('div');
+    childWrap.className = 'nav-chapter-children';
+
+    // Pinned "+ New Note" row — always first under an expanded chapter.
+    const addRow = document.createElement('div');
+    addRow.className = 'nav-row nav-row-note nav-row-add';
+    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Note</span>`;
+    addRow.addEventListener('click', () => createNote(chapter.id));
+    childWrap.appendChild(addRow);
+
+    const notes = sortByOrder(Object.values(App.noteSummaries).filter(n => n.chapterId === chapter.id));
+    if (!notes.length) {
+      const hint = document.createElement('div');
+      hint.className = 'nav-empty-hint';
+      hint.textContent = 'No notes yet';
+      childWrap.appendChild(hint);
+    }
+    notes.forEach(note => childWrap.appendChild(buildNoteRow(note)));
+
+    attachContainerDropHandlers(childWrap, { kind: 'note-list', chapterId: chapter.id });
+    wrap.appendChild(childWrap);
+  }
+
+  return wrap;
+}
+
+function buildNoteRow(noteSummary) {
+  const row = document.createElement('div');
+  row.className = 'nav-row nav-row-note' + (noteSummary.id === App.activeNoteId ? ' active' : '');
+  row.dataset.kind = 'note';
+  row.dataset.id = noteSummary.id;
+  row.draggable = true;
+  row.innerHTML = `
+    <span class="nav-row-caret placeholder">·</span>
+    <span class="nav-row-label"></span>
+  `;
+  row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || 'Untitled';
+  row.addEventListener('click', () => openNoteInTab(noteSummary.id));
+
+  attachDragHandlers(row, {
+    kind: 'note', id: noteSummary.id,
+    containerKind: 'chapter', containerId: noteSummary.chapterId,
+  });
+
+  return row;
+}
+
+function buildUnfiledSection() {
+  const wrap = document.createElement('div');
+  wrap.className = 'nav-unfiled-wrap';
+
+  const header = document.createElement('div');
+  header.className = 'nav-row nav-row-unfiled-header';
+  header.innerHTML = `<span class="nav-row-label">Unfiled Notes</span>`;
+  wrap.appendChild(header);
+
+  const childWrap = document.createElement('div');
+  childWrap.className = 'nav-unfiled-children';
+
+  const notes = sortByOrder(Object.values(App.noteSummaries).filter(n => !n.chapterId));
+  if (!notes.length) {
+    const hint = document.createElement('div');
+    hint.className = 'nav-empty-hint';
+    hint.textContent = 'Nothing unfiled';
+    childWrap.appendChild(hint);
+  }
+  notes.forEach(note => childWrap.appendChild(buildNoteRow(note)));
+
+  attachContainerDropHandlers(childWrap, { kind: 'note-list', chapterId: null });
+  wrap.appendChild(childWrap);
+  return wrap;
+}
+
+// renderInlineRenameInput(row, kind, id, currentName) — swaps a row's label
+// span for a text input, focused and selected, committing on blur or Enter,
+// cancelling on Escape. Used for both brand-new books/chapters (auto-
+// triggered) and double-click-to-rename on existing ones.
+function renderInlineRenameInput(row, kind, id, currentName) {
+  const labelEl = row.querySelector('.nav-row-label');
+  const input = document.createElement('input');
+  input.className = 'input nav-rename-input';
+  input.value = currentName;
+  labelEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  const commit = () => {
+    if (committed) return;
+    committed = true;
+    App._pendingRename = null;
+    commitInlineRename(kind, id, input.value);
+  };
+  const cancel = () => {
+    if (committed) return;
+    committed = true;
+    App._pendingRename = null;
+    renderNavTree();
+  };
+
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+}
+
+// revealNoteInNavTree(noteId) — expands the book/chapter containing this
+// note (if any) and highlights its row. Called whenever a note becomes the
+// active tab, whether by clicking an existing tab or opening a new one,
+// so the nav panel always shows "you are here."
+function revealNoteInNavTree(noteId) {
+  const summary = App.noteSummaries[noteId];
+  if (summary?.chapterId) {
+    const chapter = App.chapters[summary.chapterId];
+    if (chapter) {
+      setChapterExpanded(chapter.id, true);
+      setBookExpanded(chapter.bookId, true);
+    }
+  }
+  renderNavTree();
+  // Scroll the now-highlighted row into view if the panel is open.
+  requestAnimationFrame(() => {
+    document.querySelector(`.nav-row-note.active`)?.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// ─── Drag and drop ──────────────────────────────────────────────────
+//
+// Three draggable kinds (book, chapter, note), each constrained to valid
+// targets only:
+//   book    → reorder among other books (root level only)
+//   chapter → reorder within its book, OR move to a different book
+//   note    → reorder within its chapter/Unfiled, OR move to a different
+//             chapter or to/from Unfiled
+//
+// Two drop affordances per row, chosen by cursor position within the row:
+//   top third / bottom third → insertion line (reorder before/after this row)
+//   middle third             → "drop into" highlight (move INTO this row's
+//                               container — only valid when the row is a
+//                               container itself: a book accepts a chapter
+//                               dropped on it, a chapter accepts a note)
+//
+// Self-drop and drop-into-own-descendant are rejected by construction:
+// canDropOn() below is the single gate every drop passes through.
+
+function attachDragHandlers(rowEl, meta) {
+  rowEl.addEventListener('dragstart', (e) => {
+    App.drag = meta;
+    rowEl.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    // Firefox requires setData to be called for drag to initiate at all.
+    e.dataTransfer.setData('text/plain', meta.id);
+  });
+  rowEl.addEventListener('dragend', () => {
+    rowEl.classList.remove('dragging');
+    clearDropIndicators();
+    App.drag = null;
+  });
+
+  rowEl.addEventListener('dragover', (e) => {
+    if (!App.drag) return;
+    const target = { kind: rowEl.dataset.kind, id: rowEl.dataset.id };
+    const zone = dropZoneFor(e, rowEl, App.drag, target);
+    if (!zone) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    showDropIndicator(rowEl, zone);
+  });
+
+  rowEl.addEventListener('dragleave', () => {
+    rowEl.classList.remove('drop-line-above', 'drop-line-below', 'drop-target-into');
+  });
+
+  rowEl.addEventListener('drop', (e) => {
+    if (!App.drag) return;
+    const target = { kind: rowEl.dataset.kind, id: rowEl.dataset.id };
+    const zone = dropZoneFor(e, rowEl, App.drag, target);
+    if (!zone) return;
+    e.preventDefault();
+    e.stopPropagation();
+    performDrop(App.drag, target, zone);
+    clearDropIndicators();
+  });
+}
+
+// attachContainerDropHandlers — lets a note/chapter be dropped into an
+// otherwise-empty (or end-of-list) container, not just onto a sibling row.
+// Without this, the only way to move a note into a chapter with zero notes
+// already in it would be... nowhere to drop it.
+function attachContainerDropHandlers(containerEl, containerMeta) {
+  containerEl.addEventListener('dragover', (e) => {
+    if (!App.drag) return;
+    if (!containerAccepts(App.drag, containerMeta)) return;
+    // Only claim this if the event didn't already land on a child row
+    // (rows call stopPropagation in their own drop handler, but dragover
+    // bubbles, so check we're not hovering a specific row's middle/edge zones).
+    if (e.target.closest('.nav-row')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    containerEl.classList.add('drop-target-into');
+  });
+  containerEl.addEventListener('dragleave', (e) => {
+    if (e.target === containerEl) containerEl.classList.remove('drop-target-into');
+  });
+  containerEl.addEventListener('drop', (e) => {
+    if (!App.drag) return;
+    if (e.target.closest('.nav-row')) return; // a row already handled it
+    if (!containerAccepts(App.drag, containerMeta)) return;
+    e.preventDefault();
+    containerEl.classList.remove('drop-target-into');
+    performContainerDrop(App.drag, containerMeta);
+  });
+}
+
+function containerAccepts(drag, containerMeta) {
+  if (containerMeta.kind === 'chapter-list') return drag.kind === 'chapter' || false; // chapters only reorder within their own book's list via row drops; cross-book chapter moves land on the BOOK row itself, not the empty list area
+  if (containerMeta.kind === 'note-list')    return drag.kind === 'note';
+  return false;
+}
+
+async function performContainerDrop(drag, containerMeta) {
+  if (containerMeta.kind === 'note-list' && drag.kind === 'note') {
+    const siblings = Object.values(App.noteSummaries).filter(n => n.chapterId === containerMeta.chapterId && n.id !== drag.id);
+    const order = nextOrder(siblings);
+    await moveNoteToChapter(drag.id, containerMeta.chapterId, order);
+    renderNavTree();
+    renderTabs();
+  }
+}
+
+// dropZoneFor(e, rowEl, drag, target) — returns 'above' | 'below' | 'into'
+// | null (null = not a valid drop here at all). Position within the row
+// determines above/below vs into; canDropOn() determines validity.
+function dropZoneFor(e, rowEl, drag, target) {
+  if (!canDropOn(drag, target)) return null;
+  const rect = rowEl.getBoundingClientRect();
+  const y = e.clientY - rect.top;
+  const third = rect.height / 3;
+  // "Into" only makes sense when the target is a container the dragged
+  // item could actually live inside (a chapter for a note, a book for a
+  // chapter). Same-kind drags (note-on-note, chapter-on-chapter, book-on-
+  // book) are always reorder-only — there's no "into" for a sibling.
+  const intoValid = (drag.kind === 'note' && target.kind === 'chapter')
+                  || (drag.kind === 'chapter' && target.kind === 'book');
+  if (intoValid && y > third && y < third * 2) return 'into';
+  return y < rect.height / 2 ? 'above' : 'below';
+}
+
+// canDropOn(drag, target) — the single validity gate. Rejects self-drop,
+// drop-into-own-descendant, and cross-kind drops that don't make sense
+// (e.g. a book dropped onto a note).
+function canDropOn(drag, target) {
+  if (drag.id === target.id && drag.kind === target.kind) return false; // no self-drop
+
+  if (drag.kind === 'book')    return target.kind === 'book';
+  if (drag.kind === 'chapter') return target.kind === 'chapter' || target.kind === 'book';
+  if (drag.kind === 'note')    return target.kind === 'note' || target.kind === 'chapter';
+  return false;
+}
+
+function showDropIndicator(rowEl, zone) {
+  clearDropIndicators();
+  if (zone === 'into')  rowEl.classList.add('drop-target-into');
+  if (zone === 'above') rowEl.classList.add('drop-line-above');
+  if (zone === 'below') rowEl.classList.add('drop-line-below');
+}
+
+function clearDropIndicators() {
+  document.querySelectorAll('.drop-line-above, .drop-line-below, .drop-target-into')
+    .forEach(el => el.classList.remove('drop-line-above', 'drop-line-below', 'drop-target-into'));
+}
+
+// performDrop(drag, target, zone) — the actual data mutation once a valid
+// drop is confirmed. Reorders use the target's siblings' order values to
+// compute a new order for the dragged item; moves additionally change the
+// dragged item's parent (chapterId/bookId).
+async function performDrop(drag, target, zone) {
+  if (drag.kind === 'note')    return performNoteDrop(drag, target, zone);
+  if (drag.kind === 'chapter') return performChapterDrop(drag, target, zone);
+  if (drag.kind === 'book')    return performBookDrop(drag, target, zone);
+}
+
+// computeInsertOrder(siblings, targetId, zone) — siblings is the full
+// sorted sibling list of the container the item is landing in (NOT
+// excluding the target), targetId is the row being dropped on, zone is
+// 'above'/'below'. Returns a numeric order placing the dragged item
+// adjacent to the target on the requested side, leaving room between
+// existing siblings rather than requiring a full renumber on every drag.
+function computeInsertOrder(siblings, targetId, zone) {
+  const sorted = sortByOrder(siblings);
+  const idx = sorted.findIndex(s => s.id === targetId);
+  if (idx === -1) return nextOrder(sorted);
+  const targetOrder = sorted[idx].order || 0;
+  if (zone === 'above') {
+    const prevOrder = idx > 0 ? (sorted[idx - 1].order || 0) : targetOrder - 2;
+    return (prevOrder + targetOrder) / 2;
+  } else {
+    const nextSib = sorted[idx + 1];
+    const afterOrder = nextSib ? (nextSib.order || 0) : targetOrder + 2;
+    return (targetOrder + afterOrder) / 2;
+  }
+}
+
+async function performNoteDrop(drag, target, zone) {
+  if (target.kind === 'chapter' && zone === 'into') {
+    const siblings = Object.values(App.noteSummaries).filter(n => n.chapterId === target.id);
+    await moveNoteToChapter(drag.id, target.id, nextOrder(siblings));
+  } else if (target.kind === 'note') {
+    const targetSummary = App.noteSummaries[target.id];
+    const siblings = Object.values(App.noteSummaries).filter(n => n.chapterId === targetSummary.chapterId);
+    const order = computeInsertOrder(siblings, target.id, zone);
+    await moveNoteToChapter(drag.id, targetSummary.chapterId, order);
+  } else {
+    return;
+  }
+  renderNavTree();
+  renderTabs();
+}
+
+async function performChapterDrop(drag, target, zone) {
+  if (target.kind === 'book' && zone === 'into') {
+    const siblings = Object.values(App.chapters).filter(c => c.bookId === target.id);
+    await moveChapterToBook(drag.id, target.id, nextOrder(siblings));
+  } else if (target.kind === 'chapter') {
+    const targetChapter = App.chapters[target.id];
+    const siblings = Object.values(App.chapters).filter(c => c.bookId === targetChapter.bookId);
+    const order = computeInsertOrder(siblings, target.id, zone);
+    await moveChapterToBook(drag.id, targetChapter.bookId, order);
+  } else {
+    return;
+  }
+  renderNavTree();
+}
+
+async function performBookDrop(drag, target, zone) {
+  if (target.kind !== 'book') return;
+  const siblings = Object.values(App.books);
+  const order = computeInsertOrder(siblings, target.id, zone);
+  await reorderBook(drag.id, order);
+  renderNavTree();
 }
 
 function renderActiveNote() {
@@ -426,38 +1224,6 @@ function renderActiveNote() {
   bodyEl.value  = note.content || '';
 }
 
-async function renderNotesList() {
-  const listEl = document.getElementById('notes-list');
-  const all = await NotesStore.getAll();
-  const entries = Object.values(all).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-
-  listEl.innerHTML = '';
-  if (!entries.length) {
-    listEl.innerHTML = `<div class="notes-list-item"><span class="muted f13">No notes yet.</span></div>`;
-    return;
-  }
-  entries.forEach(note => {
-    const row = document.createElement('div');
-    row.className = 'notes-list-item';
-    row.innerHTML = `
-      <span class="notes-list-item-title"></span>
-      <span class="notes-list-item-date"></span>
-    `;
-    row.querySelector('.notes-list-item-title').textContent = noteTabLabel(note);
-    row.querySelector('.notes-list-item-date').textContent  =
-      note.updatedAt ? new Date(note.updatedAt).toLocaleDateString() : '';
-    row.addEventListener('click', () => openNoteInTab(note.id));
-    listEl.appendChild(row);
-  });
-}
-
-document.getElementById('toggle-notes-list-btn')?.addEventListener('click', () => {
-  const el = document.getElementById('notes-list');
-  const showing = el.style.display !== 'none';
-  el.style.display = showing ? 'none' : '';
-  if (!showing) renderNotesList();
-});
-
 document.getElementById('note-title-input')?.addEventListener('input', scheduleSaveActiveNote);
 document.getElementById('note-body-input')?.addEventListener('input', scheduleSaveActiveNote);
 document.getElementById('scratchpad-input')?.addEventListener('input', scheduleSaveScratchpad);
@@ -475,6 +1241,10 @@ async function renderAll() {
     ? App.data.tabState.activeId
     : (App.data.tabState.openIds[0] || null);
   App.data.tabState.activeId = App.activeNoteId;
+
+  await loadNavData();
+  renderNavTree();
+  document.getElementById('nav-panel')?.classList.toggle('open', isPanelOpen());
 
   renderTabs();
   renderActiveNote();
@@ -550,15 +1320,17 @@ document.getElementById('settings-account-btn')?.addEventListener('click', () =>
 // ─── Auth callbacks ─────────────────────────────────────────────────
 
 async function onSignedIn(data, isNew) {
-  // If the incoming data carries notes/scratchpad (it came straight off a
-  // KV pull elsewhere in auth.js, e.g. handleGoogleCredential or the
-  // load-existing-token flow), route that content into IndexedDB now
-  // rather than leaving it stranded on the plain metadata object.
-  const { notes, scratchpad, ...metadata } = data || {};
+  // If the incoming data carries notes/structure/scratchpad (it came straight
+  // off a KV pull elsewhere in auth.js, e.g. handleGoogleCredential or the
+  // load-existing-token flow), route that content into IndexedDB now rather
+  // than leaving it stranded on the plain metadata object.
+  const { notes, structure, scratchpad, ...metadata } = data || {};
   App.data = mergeData(metadata);
-  if (notes || scratchpad) {
+  if (notes || structure || scratchpad) {
     await Promise.all([
       notes ? NotesStore.replaceAll(notes) : Promise.resolve(),
+      structure?.books    ? NotesStore.replaceAllBooks(structure.books)       : Promise.resolve(),
+      structure?.chapters ? NotesStore.replaceAllChapters(structure.chapters) : Promise.resolve(),
       scratchpad ? NotesStore.setScratchpad(scratchpad.content || '') : Promise.resolve(),
     ]);
   }
@@ -591,6 +1363,15 @@ async function boot() {
   const stored = ls.get(STORAGE_KEY);
   App.data     = stored ? mergeData(stored) : defaultData();
 
+  // First-run default: open on wide viewports (the tree is genuinely useful
+  // screen real estate to spend on a desktop-sized window), closed on
+  // narrow ones (a notes tool's primary space should be the page being
+  // written, especially on a phone-width screen). Only applied when there's
+  // no stored preference yet — a returning user's explicit choice always wins.
+  if (!stored) {
+    App.data.navState.panelOpen = window.innerWidth >= 1000;
+  }
+
   const googleClientId = await fetchGoogleClientId();
 
   Auth.init({
@@ -622,24 +1403,40 @@ async function boot() {
   }
 
   // Existing session — pull from worker if configured, merge with local.
-  // Local note edits win on conflict (per-note updatedAt), same spirit as
-  // the Refectory pattern, just applied across the IndexedDB/localStorage
-  // split rather than a single object.
+  // Local edits win on conflict (per-record updatedAt), same spirit as the
+  // Refectory pattern, applied to notes AND structure (books/chapters)
+  // across the IndexedDB/localStorage split rather than a single object.
   const tokenBeforePull = App.data.userToken;
   if (getWorkerUrl()) {
     const remote = await pullFromWorker();
     if (remote) {
-      const { notes: remoteNotes, scratchpad: remoteScratchpad, ...metadata } = remote;
-      const localNotes = await NotesStore.getAll();
-      const merged = { ...(remoteNotes || {}) };
-      for (const [id, localNote] of Object.entries(localNotes)) {
-        const remoteNote = merged[id];
-        if (!remoteNote || (localNote.updatedAt || 0) >= (remoteNote.updatedAt || 0)) {
-          merged[id] = localNote;
+      const { notes: remoteNotes, structure: remoteStructure, scratchpad: remoteScratchpad, ...metadata } = remote;
+
+      const mergeByUpdatedAt = async (remoteObj, localObj) => {
+        const merged = { ...(remoteObj || {}) };
+        for (const [id, localRec] of Object.entries(localObj || {})) {
+          const remoteRec = merged[id];
+          if (!remoteRec || (localRec.updatedAt || 0) >= (remoteRec.updatedAt || 0)) {
+            merged[id] = localRec;
+          }
         }
-      }
+        return merged;
+      };
+
+      const [localNotes, localBooks, localChapters] = await Promise.all([
+        NotesStore.getAll(), NotesStore.getAllBooks(), NotesStore.getAllChapters(),
+      ]);
+
+      const mergedNotes    = await mergeByUpdatedAt(remoteNotes, localNotes);
+      const mergedBooks    = await mergeByUpdatedAt(remoteStructure?.books, localBooks);
+      const mergedChapters = await mergeByUpdatedAt(remoteStructure?.chapters, localChapters);
+
       App.data = mergeData(metadata);
-      await NotesStore.replaceAll(merged);
+      await Promise.all([
+        NotesStore.replaceAll(mergedNotes),
+        NotesStore.replaceAllBooks(mergedBooks),
+        NotesStore.replaceAllChapters(mergedChapters),
+      ]);
 
       const localPad  = await NotesStore.getScratchpad();
       const remotePad  = remoteScratchpad;
@@ -659,5 +1456,24 @@ async function boot() {
   // Catch up on a sync immediately if we crossed the threshold while away.
   maybeSync();
 }
+
+// Auth's guest-switch-confirm flow (showGuestSwitchConfirm in auth.js)
+// only clears localStorage — it has no knowledge of IndexedDB, since the
+// ported module's original host app kept all account data in one
+// localStorage blob. Remnant's note/book/chapter CONTENT lives in
+// IndexedDB, so without this, "switch account" would clear the guest's
+// profile metadata but silently leave all their notes behind to reappear
+// under the next account. Attached on the capture phase, and re-attached
+// every time the wizard re-renders this screen (auth.js rebuilds the
+// button fresh via innerHTML each time setupScreen runs), so this always
+// fires — and finishes — before auth.js's own bubble-phase handler calls
+// location.reload().
+document.addEventListener('click', (e) => {
+  if (e.target?.id === 'auth-btn-guest-switch-confirm') {
+    NotesStore.clear(); // best-effort; not awaited — a reload is about to
+                         // happen regardless, and IndexedDB writes that are
+                         // in-flight when a page reloads still commit.
+  }
+}, true); // capture phase — runs before auth.js's bubble-phase listener
 
 document.addEventListener('DOMContentLoaded', boot);
