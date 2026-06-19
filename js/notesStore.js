@@ -2,6 +2,12 @@
  * notesStore.js — IndexedDB wrapper for note content, the scratchpad, and
  * the Book → Chapter → Note organizational structure.
  *
+ * Note: the UI displays these as "Corpus / Scroll / Remnant" — this is a
+ * display-only rename. Every identifier in this file (function names,
+ * key prefixes, field names) intentionally stays book/chapter/note, since
+ * changing them would touch the KV wire format and IndexedDB schema for
+ * no user-visible benefit.
+ *
  * Note bodies and the scratchpad live here, not in localStorage, so a long
  * history of writing never approaches localStorage's ~5MB per-origin ceiling.
  * IndexedDB's quota is disk-proportional and effectively unbounded for text.

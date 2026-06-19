@@ -447,13 +447,13 @@ async function createBook(name) {
   const id = generateId('b');
   const existingBooks = Object.values(App.books);
   const book = {
-    id, name: name || 'Untitled Book', description: '',
+    id, name: name || 'Untitled Corpus', description: '',
     chapterIds: [], order: nextOrder(existingBooks),
     createdAt: Date.now(), updatedAt: Date.now(),
   };
   await NotesStore.setBook(id, book);
   App.books[id] = book;
-  setBookExpanded(id, true); // a freshly created book opens expanded — it's empty, show the "+ New Chapter" row right away
+  setBookExpanded(id, true); // a freshly created corpus opens expanded — it's empty, show the "+ New Scroll" row right away
   markDirty();
   renderNavTree();
   return id;
@@ -465,7 +465,7 @@ async function createChapter(bookId, name) {
   const id = generateId('c');
   const existingChapters = Object.values(App.chapters).filter(c => c.bookId === bookId);
   const chapter = {
-    id, bookId, name: name || 'Untitled Chapter', description: '',
+    id, bookId, name: name || 'Untitled Scroll', description: '',
     noteIds: [], order: nextOrder(existingChapters),
     createdAt: Date.now(), updatedAt: Date.now(),
   };
@@ -698,9 +698,9 @@ document.getElementById('nav-panel-scrim')?.addEventListener('click', () => setP
 document.getElementById('nav-pin-btn')?.addEventListener('click', () => setPinned(!isPinned()));
 
 document.getElementById('nav-new-book-btn')?.addEventListener('click', async () => {
-  const id = await createBook('Untitled Book');
-  // Immediately offer to rename — a brand new book with no name yet is the
-  // one moment an inline-rename prompt is welcome rather than intrusive.
+  const id = await createBook('Untitled Corpus');
+  // Immediately offer to rename — a brand new corpus with no name yet is
+  // the one moment an inline-rename prompt is welcome rather than intrusive.
   startInlineRename('book', id);
 });
 
@@ -739,27 +739,28 @@ function startInlineRename(kind, id) {
 }
 
 function commitInlineRename(kind, id, value) {
-  const name = (value || '').trim() || (kind === 'book' ? 'Untitled Book' : 'Untitled Chapter');
+  const name = (value || '').trim() || (kind === 'book' ? 'Untitled Corpus' : 'Untitled Scroll');
   if (kind === 'book') renameBook(id, name);
   else renameChapter(id, name);
 }
 
 // ─── Rendering ──────────────────────────────────────────────────────
 
-// notePath(noteId) — returns "Book Name / Chapter Name" for a filed note,
-// or "Unfiled Notes" for one that isn't. Used for the tab hover tooltip.
+// notePath(noteId) — returns "Corpus Name / Scroll Name" for a filed
+// remnant, or "Unfiled Remnants" for one that isn't. Used for the tab
+// hover tooltip.
 function notePath(noteId) {
   const summary = App.noteSummaries[noteId];
-  if (!summary || !summary.chapterId) return 'Unfiled Notes';
+  if (!summary || !summary.chapterId) return 'Unfiled Remnants';
   const chapter = App.chapters[summary.chapterId];
-  if (!chapter) return 'Unfiled Notes';
+  if (!chapter) return 'Unfiled Remnants';
   const book = App.books[chapter.bookId];
   return book ? `${book.name} / ${chapter.name}` : chapter.name;
 }
 
 function noteTabLabel(note) {
   const t = (note?.title || '').trim();
-  return t || 'Untitled';
+  return t || 'Untitled Remnant';
 }
 
 function renderTabs() {
@@ -771,7 +772,7 @@ function renderTabs() {
     if (!note) return;
     const tab = document.createElement('div');
     tab.className = 'tab' + (id === App.activeNoteId ? ' active' : '');
-    tab.title = notePath(id); // hover tooltip: which book/chapter this note lives in
+    tab.title = notePath(id); // hover tooltip: which corpus/scroll this remnant lives in
     tab.innerHTML = `<span class="tab-label"></span><span class="tab-close">&times;</span>`;
     tab.querySelector('.tab-label').textContent = noteTabLabel(note);
     tab.addEventListener('click', (e) => {
@@ -789,24 +790,26 @@ function renderTabs() {
   const newTab = document.createElement('div');
   newTab.className = 'tab-new';
   newTab.textContent = '+';
-  newTab.title = 'New note';
+  newTab.title = 'New remnant';
   newTab.addEventListener('click', () => createNote());
   bar.appendChild(newTab);
 }
 
 // ─── Nav tree rendering ─────────────────────────────────────────────
 //
-// Tree shape:
-//   Book (sorted by order)
-//     "+ New Chapter" row — always first, pinned, regardless of how many
-//      chapters already exist (so it's never something you have to scroll
+// Tree shape (user-facing terms — internal identifiers/classes/dataset
+// values stay 'book'/'chapter'/'note' throughout the codebase; only
+// display copy uses Corpus/Scroll/Remnant):
+//   Corpus (sorted by order)
+//     "+ New Scroll" row — always first, pinned, regardless of how many
+//      scrolls already exist (so it's never something you have to scroll
 //      past everything else to find)
-//     Chapter (sorted by order)
-//       "+ New Note" row — always first under an expanded chapter, same
-//        pinning rationale as New Chapter
-//       Note (sorted by order)
-//   "Unfiled Notes" — always rendered, even when empty, so it reads as a
-//    real, permanent part of the structure rather than a vanishing edge case
+//     Scroll (sorted by order)
+//       "+ New Remnant" row — always first under an expanded scroll, same
+//        pinning rationale as New Scroll
+//       Remnant (sorted by order)
+//   "Unfiled Remnants" — always rendered, even when empty, so it reads as
+//    a real, permanent part of the structure rather than a vanishing edge case
 
 function sortByOrder(arr) {
   return [...arr].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -839,7 +842,7 @@ function buildBookRow(book) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-book" title="Delete book">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">🗑</span>
     </span>
   `;
 
@@ -858,7 +861,7 @@ function buildBookRow(book) {
 
   row.querySelector('[data-action="delete-book"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Delete "${book.name}"? Chapters and notes inside will move to Unfiled Notes.`)) {
+    if (confirm(`Delete "${book.name}"? Scrolls and remnants inside will move to Unfiled Remnants.`)) {
       deleteBook(book.id);
     }
   });
@@ -873,12 +876,12 @@ function buildBookRow(book) {
     const childWrap = document.createElement('div');
     childWrap.className = 'nav-book-children';
 
-    // Pinned "+ New Chapter" row — always first, before any real chapter.
+    // Pinned "+ New Scroll" row — always first, before any real scroll.
     const addRow = document.createElement('div');
     addRow.className = 'nav-row nav-row-chapter nav-row-add';
-    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Chapter</span>`;
+    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Scroll</span>`;
     addRow.addEventListener('click', async () => {
-      const id = await createChapter(book.id, 'Untitled Chapter');
+      const id = await createChapter(book.id, 'Untitled Scroll');
       if (id) startInlineRename('chapter', id);
     });
     childWrap.appendChild(addRow);
@@ -908,7 +911,7 @@ function buildChapterRow(chapter) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete chapter">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete scroll">🗑</span>
     </span>
   `;
 
@@ -927,7 +930,7 @@ function buildChapterRow(chapter) {
 
   row.querySelector('[data-action="delete-chapter"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Delete "${chapter.name}"? Notes inside will move to Unfiled Notes.`)) {
+    if (confirm(`Delete "${chapter.name}"? Remnants inside will move to Unfiled Remnants.`)) {
       deleteChapter(chapter.id);
     }
   });
@@ -942,10 +945,10 @@ function buildChapterRow(chapter) {
     const childWrap = document.createElement('div');
     childWrap.className = 'nav-chapter-children';
 
-    // Pinned "+ New Note" row — always first under an expanded chapter.
+    // Pinned "+ New Remnant" row — always first under an expanded scroll.
     const addRow = document.createElement('div');
     addRow.className = 'nav-row nav-row-note nav-row-add';
-    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Note</span>`;
+    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Remnant</span>`;
     addRow.addEventListener('click', () => createNote(chapter.id));
     childWrap.appendChild(addRow);
 
@@ -953,7 +956,7 @@ function buildChapterRow(chapter) {
     if (!notes.length) {
       const hint = document.createElement('div');
       hint.className = 'nav-empty-hint';
-      hint.textContent = 'No notes yet';
+      hint.textContent = 'No remnants yet';
       childWrap.appendChild(hint);
     }
     notes.forEach(note => childWrap.appendChild(buildNoteRow(note)));
@@ -975,7 +978,7 @@ function buildNoteRow(noteSummary) {
     <span class="nav-row-caret placeholder">·</span>
     <span class="nav-row-label"></span>
   `;
-  row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || 'Untitled';
+  row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || 'Untitled Remnant';
   row.addEventListener('click', () => openNoteInTab(noteSummary.id));
 
   attachDragHandlers(row, {
@@ -992,7 +995,7 @@ function buildUnfiledSection() {
 
   const header = document.createElement('div');
   header.className = 'nav-row nav-row-unfiled-header';
-  header.innerHTML = `<span class="nav-row-label">Unfiled Notes</span>`;
+  header.innerHTML = `<span class="nav-row-label">Unfiled Remnants</span>`;
   wrap.appendChild(header);
 
   const childWrap = document.createElement('div');
@@ -1292,7 +1295,7 @@ function renderActiveNote() {
     bodyEl.value  = '';
     titleEl.disabled = true;
     bodyEl.disabled  = true;
-    bodyEl.placeholder = 'Open a note, or click "+" to start a new one…';
+    bodyEl.placeholder = 'Open a remnant, or click "+" to start a new one…';
     return;
   }
   titleEl.disabled = false;
@@ -1414,7 +1417,7 @@ async function onSignedIn(data, isNew) {
   }
   saveLocal();
   await renderAll();
-  showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your notes…');
+  showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');
   pushToWorker();
 }
 
