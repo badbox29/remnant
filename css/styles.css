@@ -467,6 +467,18 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   flex-shrink: 0;
 }
 
+/* Illuminated Cipher tab — small red tick, same position/shape as the
+   active-tab brass underline, but red to distinguish "currently fully
+   exposed" from merely "the active tab." Both can be true at once. */
+.tab-cipher-illuminated::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: .6rem; right: .6rem;
+  height: 2px;
+  background: var(--red);
+  border-radius: 2px;
+}
+
 .tab-new {
   padding: .55rem .9rem;
   cursor: pointer;
@@ -483,9 +495,30 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   flex-direction: column;
   padding: 1.25rem 1.75rem;
   min-height: 0;
+  border: 2px solid transparent;
+  border-radius: var(--r-md);
+  transition: border-color .2s;
+}
+
+/* Illuminate mode's persistent visual indicator — a deliberately
+   noticeable border using the same --red already reserved elsewhere for
+   "pay attention, this is consequential" (the no-recovery warning text).
+   This needs to be unmissable at a glance, since for as long as it's
+   showing, the screen is exactly as exposed as an unencrypted Remnant
+   would be — the entire point of spotlight masking is suspended. */
+.note-editor.illuminated {
+  border-color: var(--red);
+}
+
+.note-title-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: .2rem;
 }
 
 .note-title-input {
+  flex: 1;
   border: none;
   background: transparent;
   font-family: var(--font-display);
@@ -496,6 +529,23 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   color: var(--ink);
 }
 .note-title-input::placeholder { color: var(--border); }
+
+.cipher-illuminate-btn, .cipher-obscure-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cipher-obscure-btn { background: var(--red); border-color: var(--red); }
+.cipher-obscure-btn:hover { background: #8a352e; } /* darker red on hover, no token exists yet for this — small one-off */
+
+.cipher-illuminate-banner {
+  background: var(--red);
+  color: var(--paper);
+  font-size: .78rem;
+  font-weight: 600;
+  padding: .5rem .75rem;
+  border-radius: var(--r-sm);
+  margin-bottom: .75rem;
+}
 
 .note-body-input {
   flex: 1;
