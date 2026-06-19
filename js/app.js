@@ -45,6 +45,18 @@ const App = {
   openCipherIds: [],     // ordered array of Cipher ids currently open as tabs (mirrors tabState.openIds, but for Ciphers, and NEVER persisted)
   unlockedCiphers: {},   // { [cipherId]: { plaintext, key } } — only for Ciphers open AND successfully unlocked THIS session
   sessionCipherKeys: {}, // { [cipherId]: key } — the OPT-IN "remember for this session" cache; survives a Cipher tab being closed and reopened, but never a page reload
+
+  // Illuminate mode: a per-Cipher, in-memory-only toggle for showing the
+  // FULL plaintext (no spotlight masking at all) instead of the usual
+  // disguised/spotlight rendering. Same persistence guarantee as the rest
+  // of this block — never in App.data, so it can never reach localStorage
+  // or KV. Always resets to off when a Cipher's tab is closed (see
+  // closeTab) — there is no "stay illuminated across a close+reopen."
+  // Requires re-entering the passphrase to ENTER, even if the Cipher is
+  // already unlocked — full exposure is treated as a bigger commitment
+  // than spotlight viewing, deliberately, and earns its own checkpoint.
+  illuminatedCipherIds: [],
+  illuminateIdleTimer: null, // see scheduleIlluminateIdleTimer / clearIlluminateIdleTimer
 };
 
 // Default data shape (localStorage). Note CONTENT is never stored here —
@@ -389,6 +401,9 @@ async function closeTab(id) {
     // (this session or not) re-prompts, unless a session-cached key
     // exists from an explicit "remember for this session" earlier.
     delete App.unlockedCiphers[id];
+    // Always clears illuminate state too — there is no "stay illuminated
+    // across a close+reopen," full stop, regardless of session cache.
+    obscureCipher(id);
   } else {
     App.data.tabState.openIds = App.data.tabState.openIds.filter(x => x !== id);
   }
@@ -724,6 +739,158 @@ function scheduleSaveActiveCipher() {
   clearTimeout(saveCipherTimer);
   saveCipherTimer = setTimeout(saveActiveCipher, 400);
 }
+
+// ─── Illuminate / Obscure ───────────────────────────────────────────
+//
+// "Illuminate" shows a Cipher's FULL plaintext with no spotlight masking
+// at all — useful for editing or proofreading, where seeing only one
+// line at a time under the cursor is impractical. "Obscure" reverses it.
+//
+// This is a pure RENDERING toggle, not a re-decrypt: the plaintext is
+// already sitting in App.unlockedCiphers[id].plaintext once a Cipher is
+// unlocked at all, regardless of illuminate state. Illuminating doesn't
+// fetch or compute anything new — it just changes how the body textarea
+// is drawn. That's why entering/exiting is instant.
+//
+// Despite that, ENTERING illuminate mode always re-prompts for the
+// passphrase, even if the Cipher is already unlocked this session —
+// full exposure is treated as a bigger commitment than ordinary
+// spotlight viewing, and earns its own checkpoint. The session-cache
+// "remember" checkbox on the unlock modal never skips this prompt.
+//
+// Three independent exits, all funneled through one shared function
+// (obscureCipher) so there's exactly one place that does the actual
+// state cleanup:
+//   1. Manual "Obscure" button click
+//   2. Inactivity timeout (no typing/clicking while illuminated)
+//   3. Tab/window losing visibility or focus (switching away)
+// Closing the Cipher's tab ALSO always clears illuminate state (see
+// closeTab) — there is no "stay illuminated across a close+reopen."
+
+const ILLUMINATE_IDLE_MS = 3 * 60 * 1000; // 3 minutes of inactivity while illuminated
+
+function isIlluminated(id) {
+  return App.illuminatedCipherIds.includes(id);
+}
+
+function openCipherIlluminateModal() {
+  const id = App.activeNoteId;
+  if (!id || !isCipherNote(App.noteSummaries[id])) return;
+  App._pendingIlluminateCipherId = id;
+  document.getElementById('cipher-illuminate-passphrase').value = '';
+  document.getElementById('cipher-illuminate-status').textContent = '';
+  openModal('modal-cipher-illuminate');
+  document.getElementById('cipher-illuminate-passphrase').focus();
+}
+
+async function submitCipherIlluminate() {
+  const id = App._pendingIlluminateCipherId;
+  if (!id) return;
+  const statusEl = document.getElementById('cipher-illuminate-status');
+  const passphrase = document.getElementById('cipher-illuminate-passphrase').value;
+  if (!passphrase) { statusEl.textContent = 'Enter the passphrase.'; return; }
+
+  const confirmBtn = document.getElementById('cipher-illuminate-confirm-btn');
+  confirmBtn.disabled = true;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Verifying…';
+
+  // Narrow try/catch, same discipline as submitCipherUnlock: this guards
+  // ONLY the passphrase re-verification (a fresh decrypt attempt against
+  // the record on disk — not just trusting the already-unlocked in-memory
+  // copy, since the whole point is an independent checkpoint). Rendering
+  // afterward is outside it.
+  try {
+    const note = await NotesStore.get(id);
+    if (!note || !note.encrypted) throw new Error('NOT_FOUND');
+    await Cipher.decryptRecord(passphrase, note.encrypted); // throws WRONG_PASSPHRASE on mismatch; result discarded — we already hold the unlocked plaintext, this call is purely a re-verification gate
+  } catch (e) {
+    if (e.message === 'WRONG_PASSPHRASE') {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Incorrect passphrase.';
+    } else {
+      console.error('[Remnant] Cipher illuminate verification failed:', e);
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'Something went wrong. Please try again.';
+    }
+    confirmBtn.disabled = false;
+    return;
+  }
+  confirmBtn.disabled = false;
+
+  illuminateCipher(id);
+  closeModal('modal-cipher-illuminate');
+}
+
+function illuminateCipher(id) {
+  if (!App.illuminatedCipherIds.includes(id)) App.illuminatedCipherIds.push(id);
+  resetIlluminateIdleTimer();
+  renderActiveNote();
+  renderTabs();
+}
+
+// obscureCipher(id) — the single shared exit path for all three trigger
+// types. Always safe to call even if the given id isn't illuminated
+// (e.g. the idle timer firing after the user already clicked Obscure
+// manually) — it's idempotent.
+function obscureCipher(id) {
+  const i = App.illuminatedCipherIds.indexOf(id);
+  if (i !== -1) App.illuminatedCipherIds.splice(i, 1);
+  clearIlluminateIdleTimer();
+  if (App.activeNoteId === id) {
+    renderActiveNote();
+    renderTabs();
+  }
+}
+
+function resetIlluminateIdleTimer() {
+  clearIlluminateIdleTimer();
+  const id = App.activeNoteId;
+  App.illuminateIdleTimer = setTimeout(() => {
+    if (id) obscureCipher(id);
+  }, ILLUMINATE_IDLE_MS);
+}
+
+function clearIlluminateIdleTimer() {
+  if (App.illuminateIdleTimer) {
+    clearTimeout(App.illuminateIdleTimer);
+    App.illuminateIdleTimer = null;
+  }
+}
+
+// Trigger 3a: tab/window visibility change (switching to another browser
+// tab, minimizing, etc).
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    App.illuminatedCipherIds.slice().forEach(obscureCipher); // slice() — obscureCipher mutates the array we'd otherwise be iterating
+  }
+});
+// Trigger 3b: window losing focus (switching to another application
+// entirely, not just another browser tab — visibilitychange alone
+// doesn't always catch this depending on OS/window manager behavior).
+window.addEventListener('blur', () => {
+  App.illuminatedCipherIds.slice().forEach(obscureCipher);
+});
+
+document.getElementById('cipher-illuminate-btn')?.addEventListener('click', openCipherIlluminateModal);
+document.getElementById('cipher-illuminate-confirm-btn')?.addEventListener('click', submitCipherIlluminate);
+document.getElementById('cipher-illuminate-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
+document.getElementById('cipher-illuminate-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
+document.getElementById('cipher-obscure-btn')?.addEventListener('click', () => {
+  if (App.activeNoteId) obscureCipher(App.activeNoteId);
+});
+
+// Trigger 2: any typing/clicking while illuminated resets the idle clock.
+// Scoped to the title/body inputs specifically — those are the signals
+// that the user is actively present and working, not just any DOM event.
+['input', 'click'].forEach(evt => {
+  document.getElementById('note-title-input')?.addEventListener(evt, () => {
+    if (isIlluminated(App.activeNoteId)) resetIlluminateIdleTimer();
+  });
+  document.getElementById('note-body-input')?.addEventListener(evt, () => {
+    if (isIlluminated(App.activeNoteId)) resetIlluminateIdleTimer();
+  });
+});
 
 // ─── Scratchpad ─────────────────────────────────────────────────────
 
@@ -1109,10 +1276,12 @@ function renderTabs() {
   App.openCipherIds.forEach(id => {
     const summary = App.noteSummaries[id];
     if (!summary) return;
+    const illuminated = isIlluminated(id);
     const tab = document.createElement('div');
-    tab.className = 'tab tab-cipher' + (id === App.activeNoteId ? ' active' : '');
+    tab.className = 'tab tab-cipher' + (illuminated ? ' tab-cipher-illuminated' : '') + (id === App.activeNoteId ? ' active' : '');
     tab.title = notePath(id);
-    tab.innerHTML = `<span class="tab-cipher-lock" title="Cipher">🔒</span><span class="tab-label"></span><span class="tab-close">&times;</span>`;
+    const lockIcon = illuminated ? '🔓' : '🔒';
+    tab.innerHTML = `<span class="tab-cipher-lock" title="Cipher">${lockIcon}</span><span class="tab-label"></span><span class="tab-close">&times;</span>`;
     tab.querySelector('.tab-label').textContent = summary.title?.trim() || 'Untitled Remnant';
     tab.addEventListener('click', (e) => {
       if (e.target.classList.contains('tab-close')) {
@@ -1636,11 +1805,34 @@ async function performBookDrop(drag, target, zone) {
   renderNavTree();
 }
 
+// updateCipherControlsVisibility(id) — shows/hides the Illuminate button,
+// Obscure button, illuminated border, and warning banner based on
+// whether the active tab is a Cipher at all, and if so, whether it's
+// currently illuminated. Called from every renderActiveNote() exit path
+// so these stay correct regardless of which branch (no tab / Cipher /
+// plain Remnant) is active.
+function updateCipherControlsVisibility(id) {
+  const editorEl     = document.getElementById('note-editor');
+  const illuminateBtn = document.getElementById('cipher-illuminate-btn');
+  const obscureBtn    = document.getElementById('cipher-obscure-btn');
+  const bannerEl      = document.getElementById('cipher-illuminate-banner');
+
+  const isCipher = id && isCipherNote(App.noteSummaries[id]);
+  const illuminated = isCipher && isIlluminated(id);
+
+  illuminateBtn.style.display = (isCipher && !illuminated) ? '' : 'none';
+  obscureBtn.style.display    = illuminated ? '' : 'none';
+  bannerEl.style.display      = illuminated ? '' : 'none';
+  editorEl.classList.toggle('illuminated', !!illuminated);
+}
+
 function renderActiveNote() {
   const titleEl = document.getElementById('note-title-input');
   const bodyEl  = document.getElementById('note-body-input');
   const id      = App.activeNoteId;
   const summary = id ? App.noteSummaries[id] : null;
+
+  updateCipherControlsVisibility(id);
 
   if (!id || !summary) {
     titleEl.value = '';
@@ -1666,9 +1858,13 @@ function renderActiveNote() {
     }
     titleEl.disabled = false;
     bodyEl.disabled  = false;
-    // Stage 2: plain decrypted text, no spotlight-reveal disguise yet —
-    // that's stage 3. The encrypt/decrypt/save plumbing underneath is
-    // already final; only this rendering step changes later.
+    // Stage 3 will replace this with the spotlight-reveal disguise when
+    // NOT illuminated. For now (stage 2 + Illuminate added on top): both
+    // the default state and the illuminated state show plain decrypted
+    // text identically — the visual difference stage 3 introduces is the
+    // disguise/masking when illuminate is OFF, not anything about this
+    // branch itself. The Illuminate/Obscure controls and the always-clear-
+    // on-close behavior are already fully real and tested regardless.
     bodyEl.placeholder = 'Start writing…';
     titleEl.value = summary.title || '';
     bodyEl.value  = unlocked.plaintext || '';
