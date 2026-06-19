@@ -30,6 +30,7 @@
   </div>
   <div class="topbar-actions">
     <span id="sync-indicator" class="sync-indicator" style="display:none;" title="Unsynced changes">●</span>
+    <button class="link-btn" id="terminology-link-btn" title="What do Corpus, Scroll, and Remnant mean?">Terminology</button>
     <button class="btn btn-sm btn-outline" id="save-session-btn" style="display:none;">Save Session</button>
     <button class="btn btn-sm btn-ghost" id="open-settings-btn">Settings</button>
   </div>
@@ -204,6 +205,72 @@
         </div>
       </div>
 
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Terminology modal — explains Library / Corpus / Scroll / Remnant
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-terminology" role="dialog" aria-modal="true" aria-labelledby="terminology-title">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2 class="modal-title" id="terminology-title">Terminology</h2>
+      <button class="modal-close" id="terminology-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="f13 lh muted" style="margin-bottom:1.1rem;">
+        Remnant organizes your writing into four nested levels. Here's what
+        each one means and how they fit together.
+      </p>
+
+      <div class="term-entry">
+        <div class="term-name">Library</div>
+        <p class="term-def">
+          Everything you keep in Remnant. The Library holds every Corpus
+          you've created — it's the whole of your collection, not a thing
+          you organize directly.
+        </p>
+      </div>
+
+      <div class="term-entry">
+        <div class="term-name">Corpus</div>
+        <p class="term-def">
+          A major body of work — a project, an area of your life, a broad
+          subject. The top-level grouping inside your Library. A Corpus
+          holds one or more Scrolls.
+        </p>
+      </div>
+
+      <div class="term-entry">
+        <div class="term-name">Scroll</div>
+        <p class="term-def">
+          A section within a Corpus — something narrower than the whole
+          body of work, but still a grouping rather than a single piece of
+          writing. A Scroll holds one or more Remnants.
+        </p>
+      </div>
+
+      <div class="term-entry">
+        <div class="term-name">Remnant</div>
+        <p class="term-def">
+          A single saved piece of writing — what most tools would call a
+          "note." The thing you actually read and write, day to day.
+        </p>
+      </div>
+
+      <div class="term-hierarchy">
+        Library <span class="term-hierarchy-arrow">→</span>
+        Corpus <span class="term-hierarchy-arrow">→</span>
+        Scroll <span class="term-hierarchy-arrow">→</span>
+        Remnant
+      </div>
+
+      <p class="f13 lh muted" style="margin-top:1rem;margin-bottom:0;">
+        Any Remnant can also be left unfiled — outside any Scroll — and
+        you'll find it waiting in <strong>Unfiled Remnants</strong> at the
+        bottom of the Library until you decide where it belongs.
+      </p>
     </div>
   </div>
 </div>
