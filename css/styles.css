@@ -1,0 +1,454 @@
+/* ════════════════════════════════════════════════════════════════
+   Remnant — styles.css
+   Palette: warm paper & ink, aged-brass accent. A notes tool should
+   feel like a well-kept notebook, not a SaaS dashboard.
+   ════════════════════════════════════════════════════════════════ */
+
+:root {
+  --paper:       #F7F4ED;
+  --paper-dark:  #EFEAE0;
+  --ink:         #2B2823;
+  --muted:       #6B6256;
+  --brass:       #8A6F4E;
+  --brass-dark:  #6E5639;
+  --border:      #D8CFC0;
+  --red:         #A8443B;
+  --green:       #5C7A5E;
+  --blue-pale:   #DDE6E2;
+
+  /* Aliases referenced inline by auth.js (ported from Refectory, where
+     these named a slightly different palette). Defining them here means
+     the wizard's "in progress" / disabled-field styling matches Remnant's
+     palette rather than silently falling back to auth.js's hardcoded
+     fallback hex values. */
+  --gold2:       var(--brass);
+  --cream-dark:  var(--paper-dark);
+
+  --font-display: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-body:    -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono:    'SF Mono', 'Cascadia Code', Consolas, monospace;
+
+  --r-sm: 4px;
+  --r-md: 7px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+button, input, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+
+.f13 { font-size: .82rem; }
+.lh  { line-height: 1.55; }
+.muted { color: var(--muted); }
+.w100 { width: 100%; }
+.mt-8 { margin-top: .5rem; }
+.row { display: flex; align-items: center; }
+.gap-8 { gap: .5rem; }
+
+/* ── Top bar ─────────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .75rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--paper);
+}
+
+.brand {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.3rem;
+  letter-spacing: .01em;
+  color: var(--ink);
+}
+
+.topbar-actions { display: flex; align-items: center; gap: .6rem; }
+
+.sync-indicator {
+  color: var(--brass);
+  font-size: .7rem;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  padding: .45rem .85rem;
+  border-radius: var(--r-md);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background .15s, border-color .15s;
+}
+.btn-sm { padding: .32rem .65rem; font-size: .82rem; }
+
+.btn-primary { background: var(--brass); color: var(--paper); }
+.btn-primary:hover { background: var(--brass-dark); }
+
+.btn-outline { border-color: var(--border); background: var(--paper); }
+.btn-outline:hover { background: var(--paper-dark); }
+
+.btn-ghost { color: var(--muted); }
+.btn-ghost:hover { background: var(--paper-dark); color: var(--ink); }
+
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ── Main layout ─────────────────────────────────────────────────── */
+
+.main-layout {
+  display: flex;
+  height: calc(100vh - 57px);
+}
+
+.notes-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.scratchpad-column {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-dark);
+}
+
+@media (max-width: 800px) {
+  .main-layout { flex-direction: column; height: auto; }
+  .scratchpad-column { width: 100%; border-top: 1px solid var(--border); }
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--paper-dark);
+  flex-shrink: 0;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .55rem .9rem;
+  cursor: pointer;
+  white-space: nowrap;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  position: relative;
+}
+
+.tab.active {
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+/* Signature element: active tab gets a small brass tick underneath,
+   like a ribbon bookmark — a quiet, specific mark of "the open one". */
+.tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: .6rem; right: .6rem;
+  height: 2px;
+  background: var(--brass);
+  border-radius: 2px;
+}
+
+.tab-close {
+  opacity: .45;
+  font-size: .85rem;
+  padding: 0 .15rem;
+}
+.tab-close:hover { opacity: 1; color: var(--red); }
+
+.tab-new {
+  padding: .55rem .9rem;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+.tab-new:hover { color: var(--brass); background: var(--paper); }
+
+/* ── Note editor ─────────────────────────────────────────────────── */
+
+.note-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 1.75rem;
+  min-height: 0;
+}
+
+.note-title-input {
+  border: none;
+  background: transparent;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  font-weight: 600;
+  padding: 0 0 .6rem 0;
+  outline: none;
+  color: var(--ink);
+}
+.note-title-input::placeholder { color: var(--border); }
+
+.note-body-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  resize: none;
+  outline: none;
+  font-size: .98rem;
+  line-height: 1.7;
+  color: var(--ink);
+}
+.note-body-input::placeholder { color: var(--muted); opacity: .6; }
+
+/* ── Notes list (collapsed by default) ──────────────────────────── */
+
+.notes-list-toggle {
+  padding: .4rem 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.notes-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding: .4rem 0;
+}
+
+.notes-list-item {
+  padding: .5rem 1.25rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.notes-list-item:hover { background: var(--paper-dark); }
+.notes-list-item-title { font-weight: 500; }
+.notes-list-item-date { color: var(--muted); font-size: .8rem; flex-shrink: 0; }
+
+/* ── Scratchpad ──────────────────────────────────────────────────── */
+
+.scratchpad-header {
+  padding: .65rem 1rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  color: var(--brass-dark);
+}
+
+.scratchpad-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  resize: none;
+  outline: none;
+  padding: 1rem;
+  font-size: .92rem;
+  line-height: 1.65;
+  color: var(--ink);
+}
+.scratchpad-input::placeholder { color: var(--muted); opacity: .6; }
+
+/* ── Toast ───────────────────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--ink);
+  color: var(--paper);
+  padding: .65rem 1.1rem;
+  border-radius: var(--r-md);
+  font-size: .85rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s, transform .2s;
+  z-index: 200;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ── Modals ──────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(43,40,35,.45);
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-overlay.open { display: flex; }
+
+.modal {
+  background: var(--paper);
+  border-radius: var(--r-md);
+  width: 100%;
+  max-width: 520px;
+  max-height: 86vh;
+  overflow-y: auto;
+  box-shadow: 0 12px 40px rgba(43,40,35,.25);
+}
+.modal-sm { max-width: 460px; }
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.1rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1;
+}
+.modal-close:hover { color: var(--ink); }
+
+.modal-body { padding: 1.4rem; }
+
+/* ── Forms ───────────────────────────────────────────────────────── */
+
+.form-group { margin-bottom: 1rem; }
+.form-label {
+  display: block;
+  font-size: .8rem;
+  font-weight: 600;
+  margin-bottom: .35rem;
+  color: var(--muted);
+}
+.form-hint { font-size: .76rem; color: var(--muted); margin-top: .3rem; }
+
+.input {
+  width: 100%;
+  padding: .55rem .7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+  color: var(--ink);
+  outline: none;
+}
+.input:focus { border-color: var(--brass); }
+.input-mono { font-family: var(--font-mono); font-size: .82rem; }
+
+.token-display {
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  background: var(--paper-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: .25rem .5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  user-select: all;
+}
+
+.form-actions { display: flex; gap: .6rem; margin-top: 1.1rem; }
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.auth-divider::before, .auth-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+.auth-divider span { padding: 0 .6rem; }
+
+/* ── Settings sections ───────────────────────────────────────────── */
+
+.settings-section { margin-bottom: 1.3rem; }
+.settings-section-header {
+  font-size: .85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--muted);
+  margin-bottom: .6rem;
+}
+.settings-section-body { }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: .4rem 0;
+}
+.settings-row-label { font-size: .88rem; font-weight: 500; }
+.settings-row-sub { font-size: .78rem; color: var(--muted); }
+
+/* ── Auth badges (queried/styled by auth.js's renderSettingsSection) ── */
+
+.auth-badge {
+  display: inline-block;
+  padding: .15rem .55rem;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.auth-badge-guest  { background: var(--paper-dark); color: var(--muted); }
+.auth-badge-token  { background: #F0E6D2; color: var(--brass-dark); }
+.auth-badge-google { background: var(--blue-pale); color: #2d5246; }
+
+.auth-google-info {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+}
+.auth-google-avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .modal, .modal-sm { max-width: 100%; margin: 0 .75rem; }
+}
