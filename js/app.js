@@ -1367,6 +1367,10 @@ document.getElementById('settings-close-btn')?.addEventListener('click', () => {
   updateSyncIndicator();
 });
 
+// Terminology modal — purely informational, no state to save on close.
+document.getElementById('terminology-link-btn')?.addEventListener('click', () => openModal('modal-terminology'));
+document.getElementById('terminology-close-btn')?.addEventListener('click', () => closeModal('modal-terminology'));
+
 document.getElementById('settings-sync-now-btn')?.addEventListener('click', async () => {
   const ok = await pushToWorker();
   showToast(ok ? 'Synced ✓' : 'Sync failed — check your connection');
