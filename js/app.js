@@ -1136,9 +1136,14 @@ async function reorderBook(bookId, targetOrder) {
 //                      unfold to the wider inner screen; nothing about
 //                      their saved choice is touched by the override.
 //
-// Pin and open are LINKED (not independent): pinning always opens the
-// panel; unpinning always closes it. There's no "pinned but closed" state
-// to represent, so none is modeled.
+// Pin and open are PARTIALLY linked: pinning opens the panel (a
+// reasonable "make this visible and anchored" action), but unpinning
+// does NOT close it — it only switches the open panel from claiming
+// layout space to pop-out/overlay mode. Closing is always a separate,
+// explicit action: the hamburger (which works identically regardless of
+// pinned state) or clicking outside while in pop-out mode. There is no
+// "pinned but closed" state, but "unpinned and open" is a perfectly
+// normal, common state.
 //
 // Breakpoint rationale: 860px matches the documented Galaxy Fold 5 /
 // tablet breakpoint already established in the Refectory stylesheet this
@@ -1162,8 +1167,13 @@ function setPanelOpen(open) {
 
 function setPinned(pinned) {
   App.data.navState.pinned = pinned;
-  // Linked behavior, per design: pinning opens, unpinning closes.
-  App.data.navState.panelOpen = pinned;
+  // Pinning still opens the panel (a reasonable "make this visible and
+  // anchored" action), but unpinning no longer force-closes it. The panel
+  // should stay open and simply switch from claiming layout space to
+  // pop-out/overlay mode — closing is now ALWAYS a separate, explicit
+  // action (the hamburger, or clicking outside in pop-out mode), never an
+  // automatic side effect of changing the pin preference.
+  if (pinned) App.data.navState.panelOpen = true;
   markDirty(); // pin preference is KV-synced, unlike pure ephemeral UI state
   applyNavPanelDOMState();
 }
