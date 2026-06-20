@@ -547,17 +547,80 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   margin-bottom: .75rem;
 }
 
-.note-body-input {
+.note-body-wrap {
+  position: relative;
   flex: 1;
+  min-height: 0;
+}
+
+/* Both the overlay and the textarea below share this exact set of font
+   metrics (size, line-height, family, padding) — that agreement is what
+   keeps the disguise text lining up pixel-for-pixel with the real
+   textarea's lines. If either one drifts from these values without the
+   other changing too, the spotlight reveal will visually misalign. */
+.note-body-input, .cipher-disguise-overlay {
+  font-family: var(--font-body);
+  font-size: .98rem;
+  line-height: 1.7;
+  padding: 0;
+}
+
+.note-body-input {
+  position: absolute;
+  inset: 0;
   border: none;
   background: transparent;
   resize: none;
   outline: none;
-  font-size: .98rem;
-  line-height: 1.7;
   color: var(--ink);
 }
 .note-body-input::placeholder { color: var(--muted); opacity: .6; }
+
+/* When a Cipher's disguise overlay is active, the real textarea's own
+   text/caret become invisible — the overlay underneath is what the eye
+   actually sees. The textarea still receives all real keystrokes/
+   selection/cursor behavior; only its visual rendering is suppressed.
+   caret-color transparent specifically hides the blinking cursor itself,
+   which would otherwise give away the real cursor position against the
+   disguise text rendered behind it. */
+.note-body-input.cipher-masked {
+  color: transparent;
+  caret-color: transparent;
+}
+
+.cipher-disguise-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  pointer-events: none; /* clicks/typing always go to the real textarea on top */
+  color: var(--ink);
+}
+
+/* Each line of the overlay is its own block so the spotlight reveal can
+   toggle disguise-vs-real per line independently. Disguise and real text
+   are two separate spans; exactly one is visible at a time via display
+   none/inline, so there's no stacking or absolute-positioning trickery
+   needed — whichever one is showing simply occupies the line's normal
+   flow space. */
+.cipher-overlay-line {
+  display: block;
+  min-height: 1.7em; /* matches line-height, so empty lines still take up the right vertical space */
+}
+.cipher-overlay-line-disguise {
+  color: var(--muted);
+  opacity: .55;
+  filter: blur(2.5px);
+}
+.cipher-overlay-line-real {
+  color: var(--ink);
+}
+/* Default (not revealed): show disguise, hide real. */
+.cipher-overlay-line-real { display: none; }
+/* Revealed (cursor is on this line): show real, hide disguise. */
+.cipher-overlay-line.revealed .cipher-overlay-line-disguise { display: none; }
+.cipher-overlay-line.revealed .cipher-overlay-line-real { display: inline; }
 
 /* ── Scratchpad ──────────────────────────────────────────────────── */
 
