@@ -546,30 +546,22 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden; /* the TEXTAREA scrolls its own content internally; this wrapper must never grow taller than its flex box, or the overlay (sized to match) could push .note-editor/.notes-column taller than the viewport, trapping scroll in a fixed-height ancestor further up the chain */
-}
-
-/* Both the overlay and the textarea below share this exact set of font
-   metrics (size, line-height, family, padding) — that agreement is what
-   keeps the disguise text lining up pixel-for-pixel with the real
-   textarea's lines. If either one drifts from these values without the
-   other changing too, the spotlight reveal will visually misalign. */
-.note-body-input, .cipher-disguise-overlay {
-  font-family: var(--font-body);
-  font-size: .98rem;
-  line-height: 1.7;
-  padding: 0;
+  overflow: hidden; /* the TEXTAREA (or the viewer) scrolls its own content internally; this wrapper must never grow taller than its flex box, or it could push .note-editor/.notes-column taller than the viewport, trapping scroll in a fixed-height ancestor further up the chain */
 }
 
 .note-body-input {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 1.5em; /* NOT inset:0 — reserving a bottom gap here shrinks the textarea's own clientHeight, which genuinely increases its max scrollable distance (scrollHeight - clientHeight). This is different from padding-bottom on the textarea (a well-documented, unreliable cross-browser quirk where textarea bottom padding doesn't reliably count toward scrollable content) and from margin on the wrapper (which only moves where the edge sits, without changing how much room exists past the last line). Shrinking the element's own box is the one approach that actually works, because clientHeight is a direct term in the scroll-distance formula. */
+  top: 0; left: 0; right: 0; bottom: 1.5em; /* NOT inset:0 — reserving a bottom gap shrinks the textarea's own clientHeight, which genuinely increases its max scrollable distance (scrollHeight - clientHeight), giving the last line room to fully scroll into view. Textarea bottom-PADDING is a well-documented, unreliable cross-browser quirk for this same goal; shrinking the element's own box via bottom-inset is what actually works, because clientHeight is a direct term in the scroll-distance formula. */
   border: none;
   background: transparent;
   resize: none;
   outline: none;
   color: var(--ink);
-  overflow-y: auto; /* explicit, rather than relying on the textarea default — this element must always be the one that scrolls, never its wrapper */
+  font-family: var(--font-body);
+  font-size: .98rem;
+  line-height: 1.7;
+  padding: 0;
+  overflow-y: auto;
   /* Without this, a touch-drag inside the textarea is ambiguous between
      "select text" and "scroll the page" on mobile, and browsers commonly
      default to selection — trapping the page with no way to scroll past
@@ -580,60 +572,74 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .note-body-input::placeholder { color: var(--muted); opacity: .6; }
 
-/* When a Cipher's disguise overlay is active, the real textarea's own
-   text/caret become invisible — the overlay underneath is what the eye
-   actually sees. The textarea still receives all real keystrokes/
-   selection/cursor behavior; only its visual rendering is suppressed.
-   caret-color transparent specifically hides the blinking cursor itself,
-   which would otherwise give away the real cursor position against the
-   disguise text rendered behind it. */
-.note-body-input.cipher-masked {
-  color: transparent;
-  caret-color: transparent;
+/* ── Cipher obscured viewer (read-only, per-line decrypt-on-demand) ──
+   Shown instead of the textarea whenever a Cipher is unlocked but NOT
+   illuminated. Built as one real <div> row per ENCRYPTED line — row
+   count and scroll height are known immediately from the encrypted
+   array's length, no decryption needed just to lay out the viewer.
+   Each row decrypts ONLY while the cursor is over it (see app.js
+   renderCipherObscuredViewer / syncObscuredViewerToPointer) and is
+   discarded the instant the cursor moves to a different row — this is
+   genuine per-line decrypt-on-demand, not a visual effect layered on
+   an already-fully-decrypted string (compare: the textarea above,
+   used only while illuminated, DOES hold full plaintext, by design,
+   for that one explicit higher-exposure mode).
+   Plain native scroll — no second element trying to mirror anything,
+   so there's no wrap-mismatch risk at all: each row's content (sand
+   texture, or real decrypted text) is sized by itself, independently,
+   the way any normal block of text would be. */
+.cipher-obscured-viewer {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  font-family: var(--font-body);
+  font-size: .98rem;
+  line-height: 1.7;
+  color: var(--ink);
+  touch-action: pan-y;
+  padding-bottom: 1.5em; /* same breathing-room goal as the textarea's bottom-inset, but this is a plain div (not a textarea), so ordinary padding-bottom works correctly here — the textarea-padding quirk this app hit elsewhere is specific to <textarea> elements. */
 }
 
-.cipher-disguise-overlay {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 1.5em; /* matches .note-body-input's box exactly — see that rule's comment for why this is bottom-inset rather than padding */
-  overflow: hidden;
+.cipher-obscured-row {
+  min-height: 1.7em; /* keeps empty lines' vertical space even with no content yet */
+  display: flex;
+  align-items: center;
+}
+
+/* The sand visual at rest — a soft, granular-looking gradient band
+   filling the row's width, standing in for "there is a line of text
+   here, currently buried." No characters, no text content at all in
+   this state — nothing for a browser to wrap or lay out incorrectly,
+   which is the actual property that makes this approach correct rather
+   than just better-looking than the blur/noise versions tried earlier. */
+.cipher-obscured-row-sand {
+  flex: 1;
+  height: .85em;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    100deg,
+    var(--border) 0px, var(--border) 2px,
+    var(--paper-dark) 2px, var(--paper-dark) 5px,
+    var(--border) 5px, var(--border) 7px,
+    var(--paper-dark) 7px, var(--paper-dark) 11px
+  );
+  opacity: .8;
+}
+
+.cipher-obscured-row-real {
+  display: none;
   white-space: pre-wrap;
   word-wrap: break-word;
-  pointer-events: none; /* clicks/typing always go to the real textarea on top */
-  color: var(--ink);
 }
 
-/* Token-level spans (one per word/whitespace run), matching the real
-   textarea's text wrapping exactly — a long line that wraps across
-   several visual rows is several tokens landing on different rows, so
-   the spotlight reveal can target one ROW, not one logical line.
-   Every token holds the REAL text (not substituted noise) — see
-   rebuildCipherOverlay's comment for why: this guarantees the overlay
-   wraps identically to the textarea, since it's literally the same
-   string. Disguise is achieved with blur strength alone:
-     default (no class)  — far from the cursor: heavy blur, fully
-                            illegible. This is the resting state for
-                            most of the document.
-     .blurred             — immediate neighbor of the revealed row:
-                            lighter blur, gives a soft falloff at the
-                            edge of the spotlight rather than a hard cut.
-     .revealed            — the row under the cursor: fully clear.
-   A future theming pass may reintroduce scrambled-character disguise
-   using a mirror-div technique; for now this is intentionally simpler
-   and provably correct. */
-.cipher-overlay-token {
-  color: var(--ink);
-  filter: blur(6px);
-  opacity: .55;
-  transition: filter .12s, opacity .12s;
-}
-.cipher-overlay-token.blurred {
-  filter: blur(3px);
-  opacity: .75;
-}
-.cipher-overlay-token.revealed {
-  filter: none;
-  opacity: 1;
-}
+/* The "dig reveal" — an active row swaps from sand to real, decrypted
+   text. Adjacent rows (immediately above/below) get a lighter, partial
+   sand treatment as a soft falloff, echoing the original "digging
+   through shifting sand" framing rather than a hard on/off cut. */
+.cipher-obscured-row.active .cipher-obscured-row-sand { display: none; }
+.cipher-obscured-row.active .cipher-obscured-row-real { display: inline; }
+
+.cipher-obscured-row.adjacent .cipher-obscured-row-sand { opacity: .4; }
 
 /* ── Scratchpad ──────────────────────────────────────────────────── */
 
