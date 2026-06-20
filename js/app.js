@@ -635,7 +635,7 @@ function openCipherUnlockModal(id) {
   App._pendingUnlockCipherId = id;
   const summary = App.noteSummaries[id];
   document.getElementById('cipher-unlock-name').textContent =
-    (summary?.title?.trim() || 'Untitled Remnant') + ' is locked.';
+    (summary?.title?.trim() || 'Untitled Cipher') + ' is locked.';
   document.getElementById('cipher-unlock-passphrase').value = '';
   document.getElementById('cipher-unlock-remember').checked = false;
   document.getElementById('cipher-unlock-status').textContent = '';
@@ -1326,7 +1326,7 @@ function renderTabs() {
     tab.title = notePath(id);
     const lockIcon = illuminated ? '🔓' : '🔒';
     tab.innerHTML = `<span class="tab-cipher-lock" title="Cipher">${lockIcon}</span><span class="tab-label"></span><span class="tab-close">&times;</span>`;
-    tab.querySelector('.tab-label').textContent = summary.title?.trim() || 'Untitled Remnant';
+    tab.querySelector('.tab-label').textContent = summary.title?.trim() || 'Untitled Cipher';
     tab.addEventListener('click', (e) => {
       if (e.target.classList.contains('tab-close')) {
         closeTab(id);
@@ -1542,7 +1542,7 @@ function buildNoteRow(noteSummary) {
       <span class="nav-row-action-btn" data-action="delete-note" title="${isCipher ? 'Delete cipher' : 'Delete remnant'}">🗑</span>
     </span>
   `;
-  row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || 'Untitled Remnant';
+  row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || (isCipher ? 'Untitled Cipher' : 'Untitled Remnant');
   row.addEventListener('click', (e) => {
     if (e.target.closest('[data-action]')) return; // handled separately below
     if (isCipher) openCipherInTab(noteSummary.id);
@@ -1551,7 +1551,7 @@ function buildNoteRow(noteSummary) {
 
   row.querySelector('[data-action="delete-note"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const label = noteSummary.title?.trim() || 'Untitled Remnant';
+    const label = noteSummary.title?.trim() || (isCipher ? 'Untitled Cipher' : 'Untitled Remnant');
     const warning = isCipher
       ? `Delete "${label}"? This Cipher's encrypted content will be permanently deleted — there is no way to recover it afterward, even with the correct passphrase.`
       : `Delete "${label}"? This cannot be undone.`;
