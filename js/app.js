@@ -1186,6 +1186,8 @@ function applyNavPanelDOMState() {
 
   const pinBtn = document.getElementById('nav-pin-btn');
   if (pinBtn) {
+    const wideEnough = window.innerWidth >= NAV_PIN_MIN_WIDTH;
+    pinBtn.style.display = wideEnough ? '' : 'none';
     pinBtn.classList.toggle('active', isPinned());
     pinBtn.title = isPinned() ? 'Unpin panel' : 'Pin panel';
   }
@@ -1889,6 +1891,7 @@ function updateCipherControlsVisibility(id) {
   editorEl.classList.toggle('illuminated', !!illuminated);
 
   overlayEl.style.display = masked ? '' : 'none';
+  document.getElementById('note-title-input').placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
   bodyEl.classList.toggle('cipher-masked', masked);
 }
 
