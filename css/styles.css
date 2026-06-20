@@ -558,7 +558,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   font-family: var(--font-body);
   font-size: .98rem;
   line-height: 1.7;
-  padding: 0;
+  padding: 0 0 1.5em 0; /* bottom padding only — equal on both elements so they stay pixel-aligned. Without this, the textarea's max scrollTop (scrollHeight - clientHeight) leaves the very last line flush against the bottom edge, making it feel just out of reach until the window happens to be tall enough that it's not actually the last scrollable pixel. */
 }
 
 .note-body-input {
