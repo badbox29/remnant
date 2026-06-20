@@ -1268,16 +1268,13 @@ function applyNavPanelDOMState() {
 
 window.addEventListener('resize', applyNavPanelDOMState);
 
-// The Cipher disguise overlay's width is set in PIXELS at build time
-// (rebuildCipherOverlay reads bodyEl.clientWidth), so it doesn't reflow
-// on its own the way the real textarea natively does. Without this,
-// resizing the window left the overlay's tokens wrapped at whatever
-// width existed at the last keystroke/note-switch — visually "stuck"
-// at the old layout even though the real (invisible) textarea
-// underneath had already reflowed correctly.
+// The obscured viewer's rows reflow naturally on resize (each is sized
+// by its own content, nothing pixel-matched to copy) — but the active/
+// adjacent row DETECTION depends on getBoundingClientRect() positions,
+// which do change on resize, so that needs a fresh recompute.
 window.addEventListener('resize', () => {
-  if (isCipherNote(App.noteSummaries[App.activeNoteId])) {
-    rebuildCipherOverlay(App.activeNoteId);
+  if (isCipherNote(App.noteSummaries[App.activeNoteId]) && !isIlluminated(App.activeNoteId)) {
+    syncObscuredViewerToPointer(App.activeNoteId, App._lastPointerY);
   }
 });
 
@@ -1969,34 +1966,37 @@ async function performBookDrop(drag, target, zone) {
 }
 
 // updateCipherControlsVisibility(id) — shows/hides the Illuminate button,
-// Obscure button, illuminated border, warning banner, and the disguise
-// overlay itself, based on whether the active tab is a Cipher at all,
-// and if so, whether it's currently illuminated. Called from every
-// renderActiveNote() exit path so these stay correct regardless of which
-// branch (no tab / Cipher / plain Remnant) is active.
+// Obscure button, illuminated border, warning banner, and switches
+// between the textarea (illuminated) and the read-only obscured viewer
+// (not illuminated), based on whether the active tab is a Cipher at all.
+// Called from every renderActiveNote() exit path so these stay correct
+// regardless of which branch (no tab / Cipher / plain Remnant) is active.
 function updateCipherControlsVisibility(id) {
   const editorEl      = document.getElementById('note-editor');
   const illuminateBtn = document.getElementById('cipher-illuminate-btn');
   const obscureBtn     = document.getElementById('cipher-obscure-btn');
   const bannerEl       = document.getElementById('cipher-illuminate-banner');
-  const overlayEl      = document.getElementById('cipher-disguise-overlay');
+  const viewerEl       = document.getElementById('cipher-obscured-viewer');
   const bodyEl         = document.getElementById('note-body-input');
 
   const isCipher = id && isCipherNote(App.noteSummaries[id]);
   const illuminated = isCipher && isIlluminated(id);
-  // Spotlight masking is active for an unlocked, non-illuminated Cipher.
-  // Illuminate suspends it entirely — full plaintext, no overlay, no
-  // masking — which is exactly Illuminate's whole purpose.
-  const masked = isCipher && !illuminated && !!App.unlockedCiphers[id];
+  const unlocked = isCipher && !!App.unlockedCiphers[id];
 
   illuminateBtn.style.display = (isCipher && !illuminated) ? '' : 'none';
   obscureBtn.style.display    = illuminated ? '' : 'none';
   bannerEl.style.display      = illuminated ? '' : 'none';
   editorEl.classList.toggle('illuminated', !!illuminated);
-
-  overlayEl.style.display = masked ? '' : 'none';
   document.getElementById('note-title-input').placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
-  bodyEl.classList.toggle('cipher-masked', masked);
+
+  // Exactly one of {textarea, viewer} is visible at a time for a Cipher.
+  // Illuminated -> textarea (full plaintext, editable). Unlocked-but-
+  // obscured -> the read-only viewer (nothing decrypted except whatever
+  // row the cursor is currently over). A plain Remnant always uses the
+  // textarea, same as before.
+  const showViewer = isCipher && unlocked && !illuminated;
+  viewerEl.style.display = showViewer ? '' : 'none';
+  bodyEl.style.display   = showViewer ? 'none' : '';
 }
 
 function renderActiveNote() {
@@ -2032,25 +2032,24 @@ function renderActiveNote() {
       return;
     }
     titleEl.disabled = false;
-    bodyEl.disabled  = false;
-    bodyEl.placeholder = 'Start writing…';
     titleEl.value = summary.title || '';
-    // Only repopulate the body from unlocked.plaintext when actually
-    // SWITCHING to this Cipher (tracked via App._bodyShowingNoteId) —
-    // not on every renderActiveNote() call. illuminateCipher/obscureCipher
-    // both call renderActiveNote() purely to toggle the masking
-    // presentation while the SAME Cipher stays active; re-populating from
-    // unlocked.plaintext on those calls would clobber whatever's been
-    // typed since the last debounced save (unlocked.plaintext is only
-    // updated when saveActiveCipher actually runs, on a 400ms delay).
-    if (App._bodyShowingNoteId !== id) {
-      bodyEl.value = unlocked.plaintext || '';
-      App._bodyShowingNoteId = id;
+
+    if (isIlluminated(id)) {
+      // Illuminated: textarea, full plaintext, editable — same as before.
+      bodyEl.disabled = false;
+      bodyEl.placeholder = 'Start writing…';
+      if (App._bodyShowingNoteId !== id) {
+        bodyEl.value = unlocked.plaintext || '';
+        App._bodyShowingNoteId = id;
+      }
+    } else {
+      // Obscured: the read-only viewer. Built from the ENCRYPTED line
+      // array's metadata (count) — no decryption happens just to render
+      // the viewer's structure. unlocked.plaintext is null here by
+      // design (see the "Ciphers" section header) and is never read.
+      App._bodyShowingNoteId = null; // textarea isn't showing this id's content right now
+      renderCipherObscuredViewer(id);
     }
-    // Rebuild the disguise overlay from the current body content. No-ops
-    // harmlessly if this Cipher is illuminated (overlay is hidden by
-    // updateCipherControlsVisibility above).
-    rebuildCipherOverlay(id);
     return;
   }
 
@@ -2074,196 +2073,191 @@ function renderActiveNote() {
   }
 }
 
-// ─── Cipher spotlight overlay: disguise generation + cursor tracking ──
+// ─── Cipher obscured viewer: per-line decrypt-on-demand ────────────
 //
-// The overlay is a div sitting BEHIND the real textarea (see CSS —
-// .note-body-input gets color:transparent + caret-color:transparent
-// when masked, so the eye sees the overlay instead). The textarea is
-// still the thing that actually receives keystrokes/selection/cursor —
-// nothing about editing changes; only what's VISUALLY rendered does.
+// Read-only. Shown whenever a Cipher is unlocked but NOT illuminated.
+// Built as one real <div> row per ENCRYPTED line (note.encrypted.lines)
+// — row count and therefore scroll height are known immediately from
+// that array's length, with ZERO decryption needed just to lay out the
+// viewer. This is the actual structural fix for the wrap-mismatch bugs
+// chased earlier today: there's no second text layer trying to
+// reproduce anything's wrapping, because at rest there's no text at all
+// in most rows — just a sand-texture placeholder div with no characters
+// for a browser to lay out incorrectly.
 //
-// Each line in the overlay is two spans (disguise + real), built by
-// rebuildCipherOverlay() from the textarea's CURRENT value — not a
-// decrypt-from-disk and not the stale snapshot from unlock time, since
-// the live edit buffer is the actual source of truth while a Cipher tab
-// is open (see app.js's broader notes on devtools-scope for why this is
-// the right boundary: once unlocked, the full plaintext already has to
-// exist in the textarea for normal editing to work at all).
-//
-// Which line is "revealed" (real text shown instead of disguise) is
-// driven by pointer position — see updateSpotlightLine below — and
-// re-evaluated on every mousemove/touchmove over the body.
+// Decryption happens ONLY for the row currently under the cursor
+// (mouse or touch), via Cipher.decryptLineWithKey — and the decrypted
+// text is DISCARDED (the row's real-text div is cleared) the moment the
+// cursor moves to a different row. This is genuine per-line decrypt-on-
+// demand: at any moment, only the active row's plaintext exists in
+// memory at all, not a slice/mask of an already-fully-decrypted string.
 
+let cipherViewerRowCount = 0;
+let cipherViewerActiveRowIndex = -1;
+let cipherViewerDecryptToken = 0; // incremented on every row change, so a slow in-flight decrypt for a row the cursor has already left can detect it's stale and discard its own result instead of writing into the wrong row
 
-function rebuildCipherOverlay(id) {
-  const overlayEl = document.getElementById('cipher-disguise-overlay');
-  const bodyEl    = document.getElementById('note-body-input');
-  if (overlayEl.style.display === 'none') return;
+function renderCipherObscuredViewer(id) {
+  const viewerEl = document.getElementById('cipher-obscured-viewer');
+  if (viewerEl.style.display === 'none') return;
 
-  const realText = bodyEl.value;
-  overlayEl.innerHTML = '';
-  overlayEl.style.width = bodyEl.clientWidth + 'px';
-
-  // Word-level spans, but each one renders its OWN real text — not
-  // substituted noise. This guarantees the overlay wraps IDENTICALLY to
-  // the real textarea, since it's literally the same string laid out
-  // with the same font/width. An earlier version substituted scrambled
-  // noise of matching character length, which looked right in principle
-  // but did NOT reliably wrap identically — confirmed empirically (the
-  // overlay's own scrollHeight measured taller than the textarea's for
-  // the same text/width). Word-boundary line-breaking is sensitive to
-  // more than character count, and span-per-word layout has documented
-  // cross-browser quirks distinct from one continuous text node anyway.
-  // Disguise is now achieved with CSS blur alone (see .cipher-overlay-
-  // token / .blurred in styles.css) rather than character substitution.
-  // A scrambled-character disguise may return later as part of a
-  // broader theming pass, but needs a technique that doesn't risk
-  // wrap-mismatch (e.g. the textarea-caret-position "mirror div"
-  // pattern, which reflows the REAL text and overlays a styled
-  // replacement on top, rather than building independent layout).
-  const words = realText.split(/(\s+)/); // keep whitespace tokens too, so spacing/wrapping matches exactly
-  words.forEach(token => {
-    const span = document.createElement('span');
-    span.className = 'cipher-overlay-token';
-    span.textContent = token;
-    overlayEl.appendChild(span);
+  runWithCipherNote(id, (note) => {
+    const lineCount = note?.encrypted?.lines?.length || 0;
+    viewerEl.innerHTML = '';
+    for (let i = 0; i < lineCount; i++) {
+      const row = document.createElement('div');
+      row.className = 'cipher-obscured-row';
+      row.dataset.lineIndex = i;
+      row.innerHTML = `
+        <div class="cipher-obscured-row-sand"></div>
+        <div class="cipher-obscured-row-real"></div>
+      `;
+      viewerEl.appendChild(row);
+    }
+    cipherViewerRowCount = lineCount;
+    cipherViewerActiveRowIndex = -1;
+    syncObscuredViewerToPointer(id, App._lastPointerY);
   });
-
-  // Rebuilding via innerHTML = '' resets scrollTop to 0 as a side effect
-  // of clearing the DOM content. This fires on every keystroke, so
-  // without restoring scroll position here, typing while scrolled down
-  // would snap the overlay back to the top on every character while the
-  // real textarea stays scrolled — reintroducing the same desync this
-  // function exists to prevent.
-  overlayEl.scrollTop = bodyEl.scrollTop;
-
-  syncSpotlightToPointer(id, App._lastPointerY);
 }
 
-// lineHeightPx() — reads the actual computed line-height of the body
-// textarea, so spotlight math stays correct even if the font size or
-// line-height is ever changed in CSS without a matching code change here.
+// runWithCipherNote — small helper since renderCipherObscuredViewer
+// needs the note record (for encrypted.lines.length) but isn't itself
+// async-friendly to call from every render path; fires the callback
+// once the note is fetched. Synchronous callers just don't get a
+// return value, which is fine here since rendering is fire-and-forget.
+function runWithCipherNote(id, callback) {
+  NotesStore.get(id).then(note => { if (App.activeNoteId === id) callback(note); });
+}
+
 function lineHeightPx() {
-  const bodyEl = document.getElementById('note-body-input');
-  const lh = parseFloat(getComputedStyle(bodyEl).lineHeight);
+  const viewerEl = document.getElementById('cipher-obscured-viewer');
+  const lh = parseFloat(getComputedStyle(viewerEl).lineHeight);
   return Number.isFinite(lh) ? lh : 24;
 }
 
-// syncSpotlightToPointer(id, clientY) — given a Y coordinate (already
-// adjusted for the "show it above your finger on mobile" offset by the
-// caller where relevant), compute which line index that falls on,
-// accounting for the textarea's scroll position, and mark exactly that
-// line as revealed in the overlay. All other lines are un-revealed.
-function syncSpotlightToPointer(id, clientY) {
+// syncObscuredViewerToPointer(id, clientY) — determines which ROW the
+// pointer is over (by measured position, same approach as before) and
+// activates exactly that row, deactivating whichever was active before.
+function syncObscuredViewerToPointer(id, clientY) {
   if (clientY == null) return;
-  const overlayEl = document.getElementById('cipher-disguise-overlay');
-  if (overlayEl.style.display === 'none') return;
+  const viewerEl = document.getElementById('cipher-obscured-viewer');
+  if (viewerEl.style.display === 'none') return;
 
+  const rows = viewerEl.querySelectorAll('.cipher-obscured-row');
+  if (!rows.length) return;
   const lh = lineHeightPx();
-  const tokens = overlayEl.querySelectorAll('.cipher-overlay-token');
-  // Pass 1: find every token's row top (rounded to kill sub-pixel jitter).
-  const rowTops = new Set();
-  const tops = [];
-  tokens.forEach(t => {
-    const top = Math.round(t.getBoundingClientRect().top);
-    tops.push(top);
-    rowTops.add(top);
-  });
-  const sortedRows = Array.from(rowTops).sort((a, b) => a - b);
-  if (!sortedRows.length) return;
 
-  // Which row is the cursor actually over.
-  let hoveredRow = sortedRows[0];
-  for (const top of sortedRows) {
-    if (clientY >= top - lh / 2 && clientY < top + lh / 2) { hoveredRow = top; break; }
-    if (clientY < top) break;
-    hoveredRow = top;
+  const tops = Array.from(rows).map(r => Math.round(r.getBoundingClientRect().top));
+  let hoveredIdx = 0;
+  for (let i = 0; i < tops.length; i++) {
+    if (clientY >= tops[i] - lh / 2 && clientY < tops[i] + lh / 2) { hoveredIdx = i; break; }
+    if (clientY < tops[i]) { hoveredIdx = Math.max(0, i - 1); break; }
+    hoveredIdx = i;
   }
-  const hoveredIdx = sortedRows.indexOf(hoveredRow);
-  const aboveRow = sortedRows[hoveredIdx - 1];
-  const belowRow = sortedRows[hoveredIdx + 1];
 
-  tokens.forEach((t, i) => {
-    const top = tops[i];
-    t.classList.remove('revealed', 'blurred');
-    if (top === hoveredRow) {
-      t.classList.add('revealed');
-    } else if (top === aboveRow || top === belowRow) {
-      t.classList.add('blurred');
-    }
-    // Anything else keeps the default (unclassed) heavy-blur state —
-    // no third class needed, that default already fully obscures real
-    // text on its own.
+  rows.forEach((row, i) => {
+    row.classList.toggle('adjacent', i === hoveredIdx - 1 || i === hoveredIdx + 1);
   });
+
+  if (hoveredIdx === cipherViewerActiveRowIndex) return; // no change, nothing to (de/re)activate
+
+  const prevIdx = cipherViewerActiveRowIndex;
+  cipherViewerActiveRowIndex = hoveredIdx;
+  const myToken = ++cipherViewerDecryptToken;
+
+  if (prevIdx >= 0) deactivateRow(rows[prevIdx]);
+  activateRow(id, rows[hoveredIdx], hoveredIdx, myToken);
 }
 
-// Mobile touch offset: per the original design requirement, the reveal
-// window sits ABOVE the touch point on mobile, not under it — a finger
-// on the glass would otherwise cover the one area that's actually
-// legible. This is a fixed pixel offset rather than a percentage, so it
-// stays predictable regardless of zoom/viewport size.
+async function activateRow(id, rowEl, lineIndex, token) {
+  const unlocked = App.unlockedCiphers[id];
+  if (!unlocked) return;
+  const note = await NotesStore.get(id);
+  if (!note?.encrypted?.lines?.[lineIndex]) return;
+
+  let text;
+  try {
+    text = await Cipher.decryptLineWithKey(unlocked.key, note.encrypted.lines[lineIndex]);
+  } catch (e) {
+    console.error('[Remnant] Failed to decrypt line for obscured viewer:', e);
+    return;
+  }
+
+  // The cursor may have already moved on to a different row while this
+  // decrypt was in flight (decryptLineWithKey is async — a fast mouse
+  // movement across several rows can easily outrun one decrypt call).
+  // If a newer activation has started since this one began, THIS
+  // result is stale: discard it rather than writing decrypted text
+  // into a row the cursor isn't even on anymore, and rather than
+  // letting a slow result clobber a newer/correct one.
+  if (token !== cipherViewerDecryptToken) return;
+  // Also bail if this exact row got deactivated in the meantime (e.g.
+  // the user scrolled away) even without the row index itself changing.
+  if (!rowEl.isConnected) return;
+
+  const realEl = rowEl.querySelector('.cipher-obscured-row-real');
+  realEl.textContent = text;
+  rowEl.classList.add('active');
+}
+
+function deactivateRow(rowEl) {
+  if (!rowEl) return;
+  rowEl.classList.remove('active');
+  // This is the actual "discard from memory" step — clearing
+  // textContent removes the decrypted string from the DOM/render tree.
+  // The underlying JS string becomes unreachable once nothing else
+  // references it, eligible for garbage collection on the engine's own
+  // schedule (see cipher.js's broader notes on what "discard" can and
+  // cannot guarantee in JS — there's no hard zero-out, but this closes
+  // the window of EXPOSURE/REFERENCE as tightly as the language allows).
+  const realEl = rowEl.querySelector('.cipher-obscured-row-real');
+  if (realEl) realEl.textContent = '';
+}
+
+// Mobile touch offset: the reveal window sits ABOVE the touch point on
+// mobile, not under it — a finger on the glass would otherwise cover
+// the one area that's actually legible. Fixed pixel offset so it stays
+// predictable regardless of zoom/viewport size.
 const TOUCH_REVEAL_OFFSET_PX = 48;
 
-function attachCipherSpotlightTracking() {
-  const bodyEl = document.getElementById('note-body-input');
-  const overlayEl = document.getElementById('cipher-disguise-overlay');
-  if (!bodyEl) return;
+function attachCipherObscuredViewerTracking() {
+  const viewerEl = document.getElementById('cipher-obscured-viewer');
+  if (!viewerEl) return;
 
-  // Throttled to once per animation frame — syncSpotlightToPointer calls
-  // getBoundingClientRect() on every token, which forces a layout flush.
-  // Running that on every raw touchmove/scroll event (which can fire far
-  // more often than once per frame) was heavy enough to visibly stall
-  // scrolling on mobile. rAF-throttling caps the real work to the
-  // browser's own paint cadence without dropping responsiveness.
-  let spotlightFrameQueued = false;
-  function queueSpotlightSync(y) {
+  // Throttled to once per animation frame — measuring every row's
+  // getBoundingClientRect() on every raw event is the same kind of cost
+  // that caused mobile scroll jank in the earlier overlay design.
+  let frameQueued = false;
+  function queueSync(y) {
     App._lastPointerY = y;
-    if (spotlightFrameQueued) return;
-    spotlightFrameQueued = true;
+    if (frameQueued) return;
+    frameQueued = true;
     requestAnimationFrame(() => {
-      spotlightFrameQueued = false;
-      if (isCipherNote(App.noteSummaries[App.activeNoteId])) {
-        syncSpotlightToPointer(App.activeNoteId, App._lastPointerY);
+      frameQueued = false;
+      if (isCipherNote(App.noteSummaries[App.activeNoteId]) && !isIlluminated(App.activeNoteId)) {
+        syncObscuredViewerToPointer(App.activeNoteId, App._lastPointerY);
       }
     });
   }
 
-  bodyEl.addEventListener('mousemove', (e) => queueSpotlightSync(e.clientY));
-
-  bodyEl.addEventListener('touchmove', (e) => {
+  viewerEl.addEventListener('mousemove', (e) => queueSync(e.clientY));
+  viewerEl.addEventListener('touchmove', (e) => {
     if (!e.touches?.length) return;
-    queueSpotlightSync(e.touches[0].clientY - TOUCH_REVEAL_OFFSET_PX);
+    queueSync(e.touches[0].clientY - TOUCH_REVEAL_OFFSET_PX);
   }, { passive: true });
-
-  // Keep the overlay's CONTENT scrolled in lockstep with the real
-  // textarea, not just re-run the reveal calculation. The overlay never
-  // scrolls on its own (it has no scrollbar — overflow: hidden, fixed to
-  // the wrap's box) because it's a plain absolutely-positioned div, not
-  // a scroll container. Without explicitly mirroring scrollTop here, the
-  // overlay's tokens stay frozen at the positions they were built at,
-  // while the real (invisible) text scrolls past underneath them — so
-  // the reveal target drifts completely out of sync with what's actually
-  // visible the moment the user scrolls at all, not just slightly stale.
-  bodyEl.addEventListener('scroll', () => {
-    if (overlayEl) overlayEl.scrollTop = bodyEl.scrollTop;
-    queueSpotlightSync(App._lastPointerY);
-  }, { passive: true });
+  // Native scroll — the viewer is a real scroll container with real
+  // per-row content height, so scrolling just works; only the active-
+  // row DETECTION needs a refresh as rows move under the (stationary,
+  // during a scroll) pointer position.
+  viewerEl.addEventListener('scroll', () => queueSync(App._lastPointerY), { passive: true });
 }
-attachCipherSpotlightTracking();
+attachCipherObscuredViewerTracking();
 
 function scheduleSaveActive() {
   if (isCipherNote(App.noteSummaries[App.activeNoteId])) scheduleSaveActiveCipher();
   else scheduleSaveActiveNote();
 }
 document.getElementById('note-title-input')?.addEventListener('input', scheduleSaveActive);
-document.getElementById('note-body-input')?.addEventListener('input', () => {
-  scheduleSaveActive();
-  // Rebuild the overlay immediately on every keystroke too (not just on
-  // tab-switch) — disguise text needs to track the real content's shape
-  // as it changes, and a newly-typed line needs its own disguise/real
-  // pair to exist at all before the spotlight can reveal it.
-  if (isCipherNote(App.noteSummaries[App.activeNoteId])) rebuildCipherOverlay(App.activeNoteId);
-});
+document.getElementById('note-body-input')?.addEventListener('input', scheduleSaveActive);
 document.getElementById('scratchpad-input')?.addEventListener('input', scheduleSaveScratchpad);
 
 // Mobile pop-out toggle. No-op on desktop (button is CSS-hidden there,
