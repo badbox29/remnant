@@ -1280,7 +1280,17 @@ window.addEventListener('resize', applyNavPanelDOMState);
 // by its own content, nothing pixel-matched to copy) — but the active/
 // adjacent row DETECTION depends on getBoundingClientRect() positions,
 // which do change on resize, so that needs a fresh recompute.
+// Skipped while in keyboard navigation mode: syncObscuredViewerToPointer
+// is the HOVER-follow path, driven by App._lastPointerY (the last known
+// mouse/touch screen coordinate) — calling it on resize while keyboard
+// mode is active would silently overwrite the keyboard-controlled
+// active row with whatever row happens to sit under that stale
+// coordinate, with no awareness that keyboard navigation should be the
+// only thing moving the index right now. Confirmed bug: opening
+// devtools (which resizes the viewport) was resetting keyboard-mode
+// navigation back to an arbitrary low index every time.
 window.addEventListener('resize', () => {
+  if (App._cipherKeyboardMode) return;
   if (isCipherNote(App.noteSummaries[App.activeNoteId]) && !isIlluminated(App.activeNoteId)) {
     syncObscuredViewerToPointer(App.activeNoteId, App._lastPointerY);
   }
@@ -2123,7 +2133,18 @@ function renderCipherObscuredViewer(id) {
     }
     cipherViewerRowCount = lineCount;
     cipherViewerActiveRowIndex = -1;
-    syncObscuredViewerToPointer(id, App._lastPointerY);
+    // Re-sync via whichever mode is actually controlling the reveal right
+    // now — don't assume hover-follow just because that's the default;
+    // if keyboard mode happens to still be active when this rebuilds
+    // (defensive: currently nothing calls this while keyboard mode is on,
+    // but this shouldn't depend on that staying true elsewhere), restore
+    // the reveal via keyboard navigation instead of overwriting it with
+    // a hover-based guess from a possibly-stale pointer coordinate.
+    if (App._cipherKeyboardMode) {
+      navigateCipherKeyboardRow(id, 0);
+    } else {
+      syncObscuredViewerToPointer(id, App._lastPointerY);
+    }
   });
 }
 
@@ -2241,6 +2262,14 @@ function attachCipherObscuredViewerTracking() {
     frameQueued = true;
     requestAnimationFrame(() => {
       frameQueued = false;
+      // Respects keyboard mode HERE, once, rather than requiring every
+      // caller (mousemove, touchmove, scroll, resize) to remember to
+      // check separately. Confirmed bug from exactly this gap: the
+      // scrollIntoView call inside keyboard navigation itself triggers
+      // a 'scroll' event on the viewer, which called this same sync
+      // path, which would immediately overwrite the index keyboard
+      // navigation had just set — on EVERY single arrow-key press.
+      if (App._cipherKeyboardMode) return;
       if (isCipherNote(App.noteSummaries[App.activeNoteId]) && !isIlluminated(App.activeNoteId)) {
         syncObscuredViewerToPointer(App.activeNoteId, App._lastPointerY);
       }
@@ -2253,10 +2282,7 @@ function attachCipherObscuredViewerTracking() {
   // is a genuinely separate mode, not a temporary override, so a stray
   // mouse twitch doesn't silently kick you back to hover-follow. Escape
   // exits back to normal hover-follow with everything re-obscured.
-  viewerEl.addEventListener('mousemove', (e) => {
-    if (App._cipherKeyboardMode) return;
-    queueSync(e.clientY);
-  });
+  viewerEl.addEventListener('mousemove', (e) => queueSync(e.clientY));
 
   viewerEl.addEventListener('click', () => {
     if (isIlluminated(App.activeNoteId)) return;
@@ -2275,7 +2301,9 @@ function attachCipherObscuredViewerTracking() {
   // Native scroll — the viewer is a real scroll container with real
   // per-row content height, so scrolling just works; only the active-
   // row DETECTION needs a refresh as rows move under the (stationary,
-  // during a scroll) pointer position.
+  // during a scroll) pointer position. (Also correctly a no-op during
+  // keyboard mode, via queueSync's own guard above — including the
+  // scroll events keyboard navigation's own scrollIntoView triggers.)
   viewerEl.addEventListener('scroll', () => queueSync(App._lastPointerY), { passive: true });
 }
 
@@ -2383,7 +2411,7 @@ function navigateCipherKeyboardRow(id, newIndex) {
   // start instead of advancing). Letting the browser handle this the
   // same way it already handles it correctly for Remnants removes that
   // whole class of self-inflicted bug.
-  rows[clamped].scrollIntoView({ block: 'nearest' });
+  rows[clamped].scrollIntoView({ block: 'center' });
 }
 
 function handleCipherKeyboardNav(e) {
