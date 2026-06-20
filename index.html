@@ -77,7 +77,17 @@
       <div class="cipher-illuminate-banner" id="cipher-illuminate-banner" style="display:none;">
         Illuminated — this Cipher is shown in full, unmasked. Anyone looking at your screen can read it.
       </div>
-      <textarea class="note-body-input" id="note-body-input" placeholder="Start writing…"></textarea>
+      <div class="note-body-wrap" id="note-body-wrap">
+        <!-- Disguise overlay — only populated/shown for an unlocked, non-
+             illuminated Cipher. Sits BEHIND the real textarea, same exact
+             font metrics/padding, so the two line up pixel-for-pixel.
+             The real textarea stays on top with transparent text/caret —
+             it's still the thing actually receiving keystrokes/selection/
+             cursor, just visually invisible so the disguise div is what
+             the eye sees instead. See app.js renderCipherDisguiseOverlay. -->
+        <div class="cipher-disguise-overlay" id="cipher-disguise-overlay" aria-hidden="true"></div>
+        <textarea class="note-body-input" id="note-body-input" placeholder="Start writing…"></textarea>
+      </div>
     </div>
   </section>
 
