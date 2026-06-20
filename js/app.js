@@ -1200,6 +1200,19 @@ function applyNavPanelDOMState() {
 
 window.addEventListener('resize', applyNavPanelDOMState);
 
+// The Cipher disguise overlay's width is set in PIXELS at build time
+// (rebuildCipherOverlay reads bodyEl.clientWidth), so it doesn't reflow
+// on its own the way the real textarea natively does. Without this,
+// resizing the window left the overlay's tokens wrapped at whatever
+// width existed at the last keystroke/note-switch — visually "stuck"
+// at the old layout even though the real (invisible) textarea
+// underneath had already reflowed correctly.
+window.addEventListener('resize', () => {
+  if (isCipherNote(App.noteSummaries[App.activeNoteId])) {
+    rebuildCipherOverlay(App.activeNoteId);
+  }
+});
+
 function setBookExpanded(id, expanded) {
   const list = App.data.navState.expandedBookIds;
   const i = list.indexOf(id);
