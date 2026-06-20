@@ -849,8 +849,9 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 
 /* ── 640px: mid phones ──────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .main-layout { flex-direction: column; height: auto; }
-  .scratchpad-column { width: 100%; border-top: 1px solid var(--border); }
+  .main-layout { flex-direction: column; height: calc(100vh - 57px); }
+  .notes-column { flex: 1; min-height: 0; }
+  .scratchpad-column { width: 100%; flex: 0 0 auto; height: 220px; border-top: 1px solid var(--border); }
   .modal, .modal-sm { max-width: 100%; margin: 0 .75rem; }
 }
 
