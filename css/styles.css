@@ -587,29 +587,22 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   color: var(--ink);
 }
 
-/* Each line of the overlay is its own block so the spotlight reveal can
-   toggle disguise-vs-real per line independently. Disguise and real text
-   are two separate spans; exactly one is visible at a time via display
-   none/inline, so there's no stacking or absolute-positioning trickery
-   needed — whichever one is showing simply occupies the line's normal
-   flow space. */
-.cipher-overlay-line {
-  display: block;
-  min-height: 1.7em; /* matches line-height, so empty lines still take up the right vertical space */
-}
-.cipher-overlay-line-disguise {
+/* Token-level spans (one per word/whitespace run), matching the real
+   textarea's text wrapping exactly — a long line that wraps across
+   several visual rows is several tokens landing on different rows, so
+   the spotlight reveal can target one ROW, not one logical line. */
+.cipher-overlay-token {
   color: var(--muted);
-  opacity: .55;
-  filter: blur(2.5px);
 }
-.cipher-overlay-line-real {
+.cipher-overlay-token.blurred {
+  filter: blur(3px);
+  opacity: .7;
+}
+.cipher-overlay-token.revealed {
   color: var(--ink);
+  filter: none;
+  opacity: 1;
 }
-/* Default (not revealed): show disguise, hide real. */
-.cipher-overlay-line-real { display: none; }
-/* Revealed (cursor is on this line): show real, hide disguise. */
-.cipher-overlay-line.revealed .cipher-overlay-line-disguise { display: none; }
-.cipher-overlay-line.revealed .cipher-overlay-line-real { display: inline; }
 
 /* ── Scratchpad ──────────────────────────────────────────────────── */
 
