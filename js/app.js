@@ -1217,11 +1217,14 @@ function setChapterExpanded(id, expanded) {
 }
 
 document.getElementById('nav-toggle-btn')?.addEventListener('click', () => {
-  // The hamburger only makes sense as an independent open/close control
-  // when NOT pinned — when pinned, the panel's presence is governed by
-  // the pin state itself, so toggling "open" while pinned would just be
-  // immediately fighting the linked pinned→open invariant.
-  if (isPinned()) return;
+  // Checks isPinnedActive() (preference AND width), not isPinned() (the
+  // stored preference alone). A desktop window resized down below
+  // NAV_PIN_MIN_WIDTH already shows the panel as pop-out (isPinnedActive
+  // correctly says false), but the user's stored preference can still be
+  // "pinned" from when the window was wider — checking the bare
+  // preference here would silently no-op the hamburger at exactly the
+  // width where it's the ONLY way to reach the panel.
+  if (isPinnedActive()) return;
   setPanelOpen(!isPanelOpen());
 });
 document.getElementById('nav-panel-scrim')?.addEventListener('click', () => setPanelOpen(false));
