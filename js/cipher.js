@@ -191,6 +191,16 @@ const Cipher = (() => {
   }
 
   async function decryptAllLinesWithKey(key, record) {
+    if (!Array.isArray(record?.lines)) {
+      // Not a wrong passphrase — the record itself isn't in the shape
+      // this module expects (e.g. a Cipher created under an earlier,
+      // incompatible record format, or corrupted data). Surface this
+      // as its own distinct error rather than letting record.lines.map
+      // throw a raw TypeError, so callers can tell "bad passphrase"
+      // apart from "this record can't be read at all" and message the
+      // user accordingly instead of a generic crash.
+      throw new Error('MALFORMED_RECORD');
+    }
     const lines = await Promise.all(record.lines.map(line => decryptLineWithKey(key, line)));
     return lines.join('\n');
   }

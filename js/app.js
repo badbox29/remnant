@@ -671,6 +671,9 @@ async function submitCipherUnlock() {
     if (e.message === 'WRONG_PASSPHRASE') {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = 'Incorrect passphrase.';
+    } else if (e.message === 'MALFORMED_RECORD') {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'This Cipher is in a format that can no longer be read. It cannot be unlocked — you can delete it from the Library.';
     } else {
       console.error('[Remnant] Cipher unlock failed:', e);
       statusEl.style.color = 'var(--red)';
@@ -895,6 +898,9 @@ async function submitCipherIlluminate() {
     if (e.message === 'WRONG_PASSPHRASE') {
       statusEl.style.color = 'var(--red)';
       statusEl.textContent = 'Incorrect passphrase.';
+    } else if (e.message === 'MALFORMED_RECORD') {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = 'This Cipher is in a format that can no longer be read.';
     } else {
       console.error('[Remnant] Cipher illuminate verification failed:', e);
       statusEl.style.color = 'var(--red)';
@@ -1581,11 +1587,26 @@ function buildNoteRow(noteSummary) {
     <span class="nav-row-caret placeholder">·</span>
     <span class="nav-row-label"></span>
     ${isCipher ? '<span class="nav-row-cipher-badge" title="Cipher">🔒</span>' : ''}
+    <span class="nav-row-actions">
+      <span class="nav-row-action-btn" data-action="delete-note" title="${isCipher ? 'Delete cipher' : 'Delete remnant'}">🗑</span>
+    </span>
   `;
   row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || 'Untitled Remnant';
-  row.addEventListener('click', () => {
+  row.addEventListener('click', (e) => {
+    if (e.target.closest('[data-action]')) return; // handled separately below
     if (isCipher) openCipherInTab(noteSummary.id);
     else openNoteInTab(noteSummary.id);
+  });
+
+  row.querySelector('[data-action="delete-note"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const label = noteSummary.title?.trim() || 'Untitled Remnant';
+    const warning = isCipher
+      ? `Delete "${label}"? This Cipher's encrypted content will be permanently deleted — there is no way to recover it afterward, even with the correct passphrase.`
+      : `Delete "${label}"? This cannot be undone.`;
+    if (confirm(warning)) {
+      deleteNote(noteSummary.id);
+    }
   });
 
   attachDragHandlers(row, {
