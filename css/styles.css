@@ -540,6 +540,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden; /* the TEXTAREA scrolls its own content internally; this wrapper must never grow taller than its flex box, or the overlay (sized to match) could push .note-editor/.notes-column taller than the viewport, trapping scroll in a fixed-height ancestor further up the chain */
 }
 
 /* Both the overlay and the textarea below share this exact set of font
@@ -562,6 +563,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   resize: none;
   outline: none;
   color: var(--ink);
+  overflow-y: auto; /* explicit, rather than relying on the textarea default — this element must always be the one that scrolls, never its wrapper */
   /* Without this, a touch-drag inside the textarea is ambiguous between
      "select text" and "scroll the page" on mobile, and browsers commonly
      default to selection — trapping the page with no way to scroll past
