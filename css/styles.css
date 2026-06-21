@@ -374,13 +374,11 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .nav-row-add:hover { color: var(--brass-dark); }
 
-.nav-row-dust-link,
-.nav-row-deletion-log-link {
+.nav-row-dust-link {
   font-size: .8rem;
   color: var(--muted);
 }
-.nav-row-dust-link:hover,
-.nav-row-deletion-log-link:hover { color: var(--brass-dark); background: var(--paper-dark); }
+.nav-row-dust-link:hover { color: var(--brass-dark); background: var(--paper-dark); }
 
 /* Fragment drag-to-merge highlight — reuses the same visual language as
    the Book/Chapter/Note "drop into" highlight (.drop-target-into) for
@@ -875,6 +873,17 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   margin-bottom: .55rem;
 }
 .dust-row-salvage-btn { width: 100%; }
+
+.dust-deletion-log-link {
+  margin-top: 1.1rem;
+  padding-top: .9rem;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: .82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dust-deletion-log-link:hover { color: var(--brass-dark); }
 
 /* ── Deletion log modal ──────────────────────────────────────────── */
 
