@@ -78,6 +78,8 @@
         <input class="note-title-input" id="note-title-input" placeholder="Untitled remnant" />
         <button class="btn btn-sm btn-outline cipher-illuminate-btn" id="cipher-illuminate-btn" style="display:none;">Illuminate</button>
         <button class="btn btn-sm btn-primary cipher-obscure-btn" id="cipher-obscure-btn" style="display:none;">Obscure</button>
+        <button class="btn btn-sm btn-outline fragment-merge-btn" id="fragment-merge-btn" style="display:none;">Merge into…</button>
+        <button class="btn btn-sm btn-primary fragment-promote-btn" id="fragment-promote-btn" style="display:none;">Promote to Remnant</button>
       </div>
       <div class="cipher-illuminate-banner" id="cipher-illuminate-banner" style="display:none;">
         Illuminated — this Cipher is shown in full, unmasked. Anyone looking at your screen can read it.
@@ -114,8 +116,17 @@
       <button class="scratchpad-close-btn" id="scratchpad-close-btn" aria-label="Close scratchpad">&times;</button>
     </div>
     <textarea class="scratchpad-input" id="scratchpad-input" placeholder="Quick thoughts…"></textarea>
+    <div class="scratchpad-fragment-strip" id="scratchpad-fragment-strip">+ Create Fragment</div>
   </aside>
   <div class="scratchpad-scrim" id="scratchpad-scrim"></div>
+
+  <!-- Custom context menu for the scratchpad — replaces the browser's
+       native menu only when text is selected, so "Create as Fragment"
+       has somewhere to live. Positioned via JS on right-click; hidden
+       on any click elsewhere. -->
+  <div class="scratchpad-context-menu" id="scratchpad-context-menu" style="display:none;">
+    <div class="scratchpad-context-menu-item" id="scratchpad-context-create-fragment">Create as Fragment</div>
+  </div>
 
 </main>
 
@@ -440,6 +451,78 @@
       <div class="form-actions">
         <button class="btn btn-ghost" id="cipher-illuminate-cancel-btn">Cancel</button>
         <button class="btn btn-primary" id="cipher-illuminate-confirm-btn">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Fragment merge-target picker — lists every OTHER live Fragment
+     as a candidate to merge the current one INTO. The current
+     Fragment always plays the role of the one being merged away;
+     whichever row the user clicks becomes the survivor. Matches the
+     drag-and-drop merge's roles (dragged = merged away, dropped-on =
+     survivor) so the two paths behave identically.
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-fragment-merge" role="dialog" aria-modal="true" aria-labelledby="fragment-merge-title">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2 class="modal-title" id="fragment-merge-title">Merge into…</h2>
+      <button class="modal-close" id="fragment-merge-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="f13 lh muted" style="margin-bottom:1rem;">
+        Choose a fragment to merge this one into. Its content will be appended, with a short note of where it came from, and this fragment will be deleted.
+      </p>
+      <div class="fragment-merge-list" id="fragment-merge-list">
+        <!-- Rendered by app.js: one row per other live fragment -->
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="fragment-merge-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Dust — fragments that decayed past their 28-day lifespan sit
+     here for 7 more days, view-only, before permanent deletion.
+     Salvage is the only way out besides letting it expire.
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-dust" role="dialog" aria-modal="true" aria-labelledby="dust-title">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="dust-title">Dust</h2>
+      <button class="modal-close" id="dust-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="f13 lh muted" style="margin-bottom:1rem;">
+        Fragments that decayed from neglect. Each has 7 days here to be salvaged before it's gone for good.
+      </p>
+      <div class="dust-list" id="dust-list">
+        <!-- Rendered by app.js: one row per dusted fragment -->
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
+     Deletion log — Fragments hard-deleted from Dust. Snippet +
+     timestamp only, by design (see Fragment Lifecycle spec) — never
+     the full content, since restoring it would defeat the point.
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-deletion-log" role="dialog" aria-modal="true" aria-labelledby="deletion-log-title">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="deletion-log-title">Deletion Log</h2>
+      <button class="modal-close" id="deletion-log-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="f13 lh muted" style="margin-bottom:1rem;">
+        Fragments that were never salvaged from Dust and were permanently deleted.
+      </p>
+      <div class="deletion-log-list" id="deletion-log-list">
+        <!-- Rendered by app.js: one row per deleted fragment -->
       </div>
     </div>
   </div>
