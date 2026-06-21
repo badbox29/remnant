@@ -2285,6 +2285,18 @@ function attachCipherObscuredViewerTracking() {
   viewerEl.addEventListener('mousemove', (e) => queueSync(e.clientY));
 
   viewerEl.addEventListener('click', () => {
+    // Keyboard navigation mode is desktop-only. Below this width, a tap
+    // synthesizes a native 'click' event the same as a real click would
+    // — so without this gate, simply tapping into the viewer to start a
+    // drag-to-reveal gesture was silently locking into keyboard mode,
+    // with no way out (Escape is the only exit, and there's no Escape
+    // key on a touchscreen). 860px matches the same desktop-class width
+    // threshold already used elsewhere in this app (see
+    // NAV_PIN_MIN_WIDTH) — not because this is the same feature, but
+    // because it's the established line this app already draws between
+    // "desktop-shaped layout" and "phone/tablet," and keyboard
+    // navigation specifically assumes a real keyboard is attached.
+    if (window.innerWidth < 860) return;
     if (isIlluminated(App.activeNoteId)) return;
     enterCipherKeyboardMode();
   });
@@ -2330,12 +2342,20 @@ function updateTouchEdgeAutoScroll(viewerEl, touchClientY) {
   const distanceFromTop    = touchClientY - rect.top;
   const distanceFromBottom = rect.bottom - touchClientY;
 
+  // Quadratic easing (progress²) rather than linear — linear reaches a
+  // meaningful fraction of max speed almost immediately upon entering
+  // the trigger zone, which read as an abrupt snap-on rather than a
+  // gradual ramp. Squaring keeps speed low through most of the zone and
+  // only ramps up sharply right at the very edge of the viewport, which
+  // is what actually reads as "slow to fast" rather than "off to on."
   if (distanceFromBottom < zoneSize) {
     edgeScrollDirection = 1;
-    edgeScrollSpeed = EDGE_SCROLL_MAX_PX_PER_FRAME * (1 - Math.max(0, distanceFromBottom) / zoneSize);
+    const progress = 1 - Math.max(0, distanceFromBottom) / zoneSize;
+    edgeScrollSpeed = EDGE_SCROLL_MAX_PX_PER_FRAME * progress * progress;
   } else if (distanceFromTop < zoneSize) {
     edgeScrollDirection = -1;
-    edgeScrollSpeed = EDGE_SCROLL_MAX_PX_PER_FRAME * (1 - Math.max(0, distanceFromTop) / zoneSize);
+    const progress = 1 - Math.max(0, distanceFromTop) / zoneSize;
+    edgeScrollSpeed = EDGE_SCROLL_MAX_PX_PER_FRAME * progress * progress;
   } else {
     edgeScrollDirection = 0;
   }
@@ -2367,6 +2387,7 @@ function stopTouchEdgeAutoScroll() {
 function enterCipherKeyboardMode() {
   const id = App.activeNoteId;
   if (!id || isIlluminated(id)) return;
+  if (window.innerWidth < 860) return; // desktop-only — see the click listener's comment for why
   App._cipherKeyboardMode = true;
   document.getElementById('cipher-obscured-viewer')?.classList.add('keyboard-mode');
   cipherViewerActiveRowIndex = -1; // force activateRow to actually run for row 0, even if it was already hover-active
