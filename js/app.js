@@ -1879,10 +1879,44 @@ function renderTabs() {
   const newTab = document.createElement('div');
   newTab.className = 'tab-new';
   newTab.textContent = '+';
-  newTab.title = 'New remnant';
-  newTab.addEventListener('click', () => createNote());
+  newTab.title = 'New…';
+  newTab.addEventListener('click', (e) => openTabNewMenu(e.currentTarget));
   bar.appendChild(newTab);
 }
+
+// ─── "+" tab-bar menu: choose what kind of thing to create ─────────
+//
+// Positioned relative to the "+" button itself (not the cursor — this
+// is a deliberate click target, not a right-click-at-a-point gesture
+// like the scratchpad's context menu), so it always anchors just below
+// wherever the button currently sits in the tab bar.
+
+const tabNewMenu = document.getElementById('tab-new-menu');
+
+function openTabNewMenu(anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  tabNewMenu.style.left = `${rect.left}px`;
+  tabNewMenu.style.top  = `${rect.bottom + 4}px`;
+  tabNewMenu.style.display = 'block';
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#tab-new-menu') || e.target.closest('.tab-new')) return;
+  tabNewMenu.style.display = 'none';
+});
+
+document.getElementById('tab-new-menu-remnant')?.addEventListener('click', () => {
+  tabNewMenu.style.display = 'none';
+  createNote();
+});
+document.getElementById('tab-new-menu-cipher')?.addEventListener('click', () => {
+  tabNewMenu.style.display = 'none';
+  openCipherCreateModal(null);
+});
+document.getElementById('tab-new-menu-fragment')?.addEventListener('click', () => {
+  tabNewMenu.style.display = 'none';
+  createFragmentAndOpen();
+});
 
 // ─── Nav tree rendering ─────────────────────────────────────────────
 //
@@ -2122,6 +2156,16 @@ function buildUnfiledSection() {
 
   const childWrap = document.createElement('div');
   childWrap.className = 'nav-unfiled-children';
+
+  // Pinned "+ New Remnant" row — same rationale as Loose Fragments'
+  // "+ New Fragment": always present, not dependent on hovering/selecting
+  // anything, so starting something new from this section never requires
+  // going through the tab bar's "+" menu.
+  const addRow = document.createElement('div');
+  addRow.className = 'nav-row nav-row-note nav-row-add';
+  addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Remnant</span>`;
+  addRow.addEventListener('click', () => createNote());
+  childWrap.appendChild(addRow);
 
   const notes = sortByOrder(Object.values(App.noteSummaries).filter(n => !n.chapterId));
   if (!notes.length) {
