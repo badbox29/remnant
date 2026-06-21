@@ -279,25 +279,25 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   margin-right: .3rem;
 }
 
-/* Pin toggle — custom hand-drawn artwork (a small Remnant outline; the
-   pinned state shows the same outline pierced by a dagger), rather than
-   any abstract symbol (pushpin emoji, chevrons) borrowed from outside
-   the app's own visual vocabulary. The icon literally illustrates the
-   feature: a Remnant pinned in place by the thing doing the pinning.
+/* Pin toggle — double-chevron-plus-ground-line artwork, matching the
+   same clean material-icon register as the Corpus/Scroll/Remnant/
+   Cipher nav icons. Unpinned: chevrons point UP toward the ground line
+   (the panel could retreat/collapse). Pinned: chevrons point DOWN onto
+   the ground line (anchored, settled in place).
    Two <img> elements sit in the button (see index.html); exactly one is
    shown at a time via display none/block, toggled by the .active class
    — the same pattern as the Illuminate/Obscure button pair elsewhere in
-   this file. Both source images were pre-scaled so their PARCHMENT
-   portions match in height (not their raw canvas size — the pinned
-   artwork's canvas is taller because the dagger hilt extends above the
-   parchment), so toggling between states reads as "a dagger appears,"
-   not "the icon resizes." */
+   this file. Both source images share an IDENTICAL content bounding box
+   (verified at build time, not just assumed), so unlike an earlier hand-
+   drawn parchment/dagger version of this icon, no per-state rescaling
+   was needed to keep them visually matched — toggling between states is
+   a straight asset swap with no separate alignment compensation. */
 .nav-pin-btn {
   background: none;
   border: none;
   cursor: pointer;
   display: flex;
-  align-items: flex-end; /* both icons' parchment portions sit on the same baseline, even though the pinned canvas is taller above it */
+  align-items: flex-end;
   padding: 0 .35rem;
   margin-right: -.3rem; /* pulls flush against the panel's right edge, past the header's own padding */
   border-radius: var(--r-sm);
