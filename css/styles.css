@@ -375,8 +375,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .nav-row-add:hover { color: var(--brass-dark); }
 
 .nav-row-dust-link {
-  font-size: .8rem;
-  color: var(--muted);
+  cursor: pointer;
 }
 .nav-row-dust-link:hover { color: var(--brass-dark); background: var(--paper-dark); }
 
