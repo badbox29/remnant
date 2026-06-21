@@ -1024,6 +1024,159 @@ document.getElementById('cipher-obscure-btn')?.addEventListener('click', () => {
   if (App.activeNoteId) obscureCipher(App.activeNoteId);
 });
 
+// ─── Fragments: editor buttons (Merge into…, Promote) ──────────────
+//
+// Both buttons live in note-title-row, in the title input's spot, since
+// Fragments have no title — see renderActiveNote's Fragment branch for
+// where they're shown/hidden alongside the disabled title field.
+
+function updateFragmentControlsVisibility(id) {
+  const mergeBtn   = document.getElementById('fragment-merge-btn');
+  const promoteBtn = document.getElementById('fragment-promote-btn');
+  const isFragment = App._activeIsFragment && !!id;
+  mergeBtn.style.display   = isFragment ? '' : 'none';
+  promoteBtn.style.display = isFragment ? '' : 'none';
+}
+
+document.getElementById('fragment-promote-btn')?.addEventListener('click', () => {
+  const id = App.activeNoteId;
+  if (!id || !App._activeIsFragment) return;
+  if (confirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.')) {
+    promoteFragmentToRemnant(id);
+  }
+});
+
+document.getElementById('fragment-merge-btn')?.addEventListener('click', () => {
+  if (App.activeNoteId && App._activeIsFragment) openFragmentMergeModal(App.activeNoteId);
+});
+
+// openFragmentMergeModal(mergedId) — lists every OTHER live fragment as a
+// possible merge target. mergedId always plays the "merged away" role,
+// matching drag-and-drop's roles (see attachFragmentDragHandlers).
+function openFragmentMergeModal(mergedId) {
+  const listEl = document.getElementById('fragment-merge-list');
+  listEl.innerHTML = '';
+  const others = Object.values(App.fragmentSummaries)
+    .filter(f => f.id !== mergedId && f.status !== 'dust')
+    .sort((a, b) => b.lastInteractedAt - a.lastInteractedAt);
+
+  if (!others.length) {
+    const hint = document.createElement('div');
+    hint.className = 'nav-empty-hint';
+    hint.textContent = 'No other fragments to merge into';
+    listEl.appendChild(hint);
+  }
+  others.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'fragment-merge-row';
+    row.textContent = fragmentPreviewLabel(f);
+    row.addEventListener('click', () => {
+      closeModal('modal-fragment-merge');
+      confirmAndMergeFragments(mergedId, f.id);
+    });
+    listEl.appendChild(row);
+  });
+  openModal('modal-fragment-merge');
+}
+document.getElementById('fragment-merge-close-btn')?.addEventListener('click', () => closeModal('modal-fragment-merge'));
+document.getElementById('fragment-merge-cancel-btn')?.addEventListener('click', () => closeModal('modal-fragment-merge'));
+
+// ─── Fragments: Dust modal ──────────────────────────────────────────
+//
+// View-only per spec — the ONLY action available on a dusted fragment
+// is Salvage (or letting it expire). No edit, no delete-now button; a
+// dusted fragment's only sanctioned exits are salvageFragment() or the
+// automatic sweep-driven hard delete on day 7.
+
+function dustFellOnLabel(fragment) {
+  const dustedAt = fragment.lastInteractedAt + NotesStore.FRAGMENT_LIFESPAN_MS;
+  return new Date(dustedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function dustDaysUntilDeletion(fragment) {
+  const dustedAt = fragment.lastInteractedAt + NotesStore.FRAGMENT_LIFESPAN_MS;
+  const deleteAt = dustedAt + NotesStore.FRAGMENT_DUST_MS;
+  const remainingMs = deleteAt - Date.now();
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+}
+
+function openDustModal() {
+  const listEl = document.getElementById('dust-list');
+  listEl.innerHTML = '';
+  const dusted = Object.values(App.fragmentSummaries)
+    .filter(f => f.status === 'dust')
+    .sort((a, b) => a.lastInteractedAt - b.lastInteractedAt); // oldest-dusted (soonest to delete) first
+
+  if (!dusted.length) {
+    const hint = document.createElement('div');
+    hint.className = 'nav-empty-hint';
+    hint.textContent = 'Nothing in Dust right now';
+    listEl.appendChild(hint);
+  }
+  dusted.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'dust-row';
+    const daysLeft = dustDaysUntilDeletion(f);
+    row.innerHTML = `
+      <div class="dust-row-snippet"></div>
+      <div class="dust-row-meta">
+        Fell to dust on ${dustFellOnLabel(f)} — ${daysLeft === 1 ? '1 day' : `${daysLeft} days`} until permanently deleted
+      </div>
+      <button class="btn btn-sm btn-primary dust-row-salvage-btn">Salvage</button>
+    `;
+    row.querySelector('.dust-row-snippet').textContent = fragmentPreviewLabel(f);
+    row.querySelector('.dust-row-salvage-btn').addEventListener('click', async () => {
+      await salvageFragmentAndRefresh(f.id);
+      openDustModal(); // re-render the list minus the salvaged one
+    });
+    listEl.appendChild(row);
+  });
+  openModal('modal-dust');
+}
+document.getElementById('dust-close-btn')?.addEventListener('click', () => closeModal('modal-dust'));
+
+async function salvageFragmentAndRefresh(id) {
+  await NotesStore.salvageFragment(id);
+  const refreshed = await NotesStore.get(id);
+  if (refreshed) {
+    App.fragmentSummaries[id] = {
+      id, content: refreshed.content || '', status: refreshed.status || null,
+      lastInteractedAt: refreshed.lastInteractedAt, updatedAt: refreshed.updatedAt || 0,
+    };
+  }
+  markDirty();
+  renderNavTree();
+  showToast('Fragment salvaged — fresh 28 days');
+}
+
+// ─── Fragments: Deletion Log modal ──────────────────────────────────
+
+function openDeletionLogModal() {
+  NotesStore.getDeletionLog().then(entries => {
+    const listEl = document.getElementById('deletion-log-list');
+    listEl.innerHTML = '';
+    if (!entries.length) {
+      const hint = document.createElement('div');
+      hint.className = 'nav-empty-hint';
+      hint.textContent = 'No fragments have been permanently deleted';
+      listEl.appendChild(hint);
+    }
+    entries.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = 'deletion-log-row';
+      row.innerHTML = `
+        <div class="deletion-log-snippet"></div>
+        <div class="deletion-log-meta"></div>
+      `;
+      row.querySelector('.deletion-log-snippet').textContent = entry.snippet;
+      row.querySelector('.deletion-log-meta').textContent = new Date(entry.deletedAt).toLocaleString();
+      listEl.appendChild(row);
+    });
+    openModal('modal-deletion-log');
+  });
+}
+document.getElementById('deletion-log-close-btn')?.addEventListener('click', () => closeModal('modal-deletion-log'));
+
 // Trigger 2: any typing/clicking while illuminated resets the idle clock.
 // Scoped to the title/body inputs specifically — those are the signals
 // that the user is actively present and working, not just any DOM event.
@@ -1051,6 +1204,75 @@ function scheduleSaveScratchpad() {
 async function loadScratchpad() {
   const pad = await NotesStore.getScratchpad();
   document.getElementById('scratchpad-input').value = (pad && pad.content) || '';
+}
+
+// ─── Scratchpad → Fragment integration ─────────────────────────────
+//
+// Two on-ramps into Fragments from the scratchpad, per spec:
+//   1. Select text → right-click → "Create as Fragment" — a custom
+//      context menu (the browser's native one is suppressed only when
+//      there's an actual selection to act on; an empty-selection right-
+//      click falls through to the normal browser menu, since there's
+//      nothing for this app to offer there).
+//   2. A persistent "+ Create Fragment" strip, always available,
+//      independent of any selection, for starting a blank Fragment.
+// Both paths land in Loose Fragments. The context-menu path is a MOVE,
+// not a copy — the selected text is cut from the scratchpad becoming
+// the new Fragment's entire content, per spec.
+
+const scratchpadInput = document.getElementById('scratchpad-input');
+const scratchpadContextMenu = document.getElementById('scratchpad-context-menu');
+
+scratchpadInput?.addEventListener('contextmenu', (e) => {
+  const hasSelection = scratchpadInput.selectionStart !== scratchpadInput.selectionEnd;
+  if (!hasSelection) return; // let the native context menu show — nothing to offer here without a selection
+  e.preventDefault();
+  scratchpadContextMenu.style.left = `${e.pageX}px`;
+  scratchpadContextMenu.style.top  = `${e.pageY}px`;
+  scratchpadContextMenu.style.display = 'block';
+});
+
+document.addEventListener('click', () => {
+  scratchpadContextMenu.style.display = 'none';
+});
+
+document.getElementById('scratchpad-context-create-fragment')?.addEventListener('click', async () => {
+  const start = scratchpadInput.selectionStart;
+  const end   = scratchpadInput.selectionEnd;
+  if (start === end) return; // selection may have been lost between right-click and click (e.g. the menu click itself); no-op rather than create an empty Fragment
+  const selectedText = scratchpadInput.value.slice(start, end);
+
+  // Cut: remove the selected range from the scratchpad's own value, then
+  // persist the shortened scratchpad immediately — this is a MOVE, and
+  // both halves (new Fragment + shrunk scratchpad) must land together,
+  // not leave a window where the text exists in neither or both.
+  const before = scratchpadInput.value.slice(0, start);
+  const after  = scratchpadInput.value.slice(end);
+  scratchpadInput.value = before + after;
+  await NotesStore.setScratchpad(scratchpadInput.value);
+
+  await createFragmentFromText(selectedText);
+});
+
+document.getElementById('scratchpad-fragment-strip')?.addEventListener('click', () => {
+  createFragmentAndOpen();
+});
+
+// createFragmentFromText(content) — like createFragmentAndOpen, but for
+// content arriving pre-written (the scratchpad-selection path) rather
+// than starting blank.
+async function createFragmentFromText(content) {
+  const fragment = await NotesStore.createFragment(content);
+  App.fragmentSummaries[fragment.id] = {
+    id: fragment.id, content: fragment.content, status: null,
+    lastInteractedAt: fragment.lastInteractedAt, updatedAt: fragment.updatedAt,
+  };
+  App.openFragmentIds.push(fragment.id);
+  setActiveFragment(fragment.id);
+  markDirty();
+  renderTabs();
+  renderNavTree();
+  showToast('Created as Fragment');
 }
 
 // ─── Books & Chapters: data operations ─────────────────────────────
@@ -1981,6 +2203,19 @@ function buildFragmentsSection() {
   }
   fragments.forEach(f => childWrap.appendChild(buildFragmentRow(f)));
 
+  const dustCount = Object.values(App.fragmentSummaries).filter(f => f.status === 'dust').length;
+  const dustRow = document.createElement('div');
+  dustRow.className = 'nav-row nav-row-note nav-row-dust-link';
+  dustRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">Dust${dustCount ? ` (${dustCount})` : ''}</span>`;
+  dustRow.addEventListener('click', () => openDustModal());
+  childWrap.appendChild(dustRow);
+
+  const logRow = document.createElement('div');
+  logRow.className = 'nav-row nav-row-note nav-row-deletion-log-link';
+  logRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">Deletion Log</span>`;
+  logRow.addEventListener('click', () => openDeletionLogModal());
+  childWrap.appendChild(logRow);
+
   wrap.appendChild(childWrap);
   return wrap;
 }
@@ -1992,6 +2227,7 @@ function buildFragmentRow(fragment) {
   row.dataset.kind = 'fragment';
   row.dataset.id = fragment.id;
   row.title = tooltip;
+  row.draggable = true;
   row.innerHTML = `
     <span class="nav-row-caret placeholder">·</span>
     <img class="nav-row-icon" src="${icon}" alt="" />
@@ -2011,8 +2247,139 @@ function buildFragmentRow(fragment) {
       deleteFragment(fragment.id);
     }
   });
+
+  // Right-click → Promote to Remnant. A native browser context menu
+  // replacement isn't warranted here (unlike the scratchpad's, which
+  // needs multiple options) — a single confirm() is enough for one action.
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (confirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.')) {
+      promoteFragmentToRemnant(fragment.id);
+    }
+  });
+
+  attachFragmentDragHandlers(row, fragment.id);
   return row;
 }
+
+// ─── Fragments: drag-to-merge ───────────────────────────────────────
+//
+// Deliberately separate from the Book/Chapter/Note drag system
+// (attachDragHandlers / canDropOn / performDrop) — that system encodes
+// reorder + re-parent semantics that don't apply here. Dropping one
+// Fragment row onto another has exactly one meaning: merge the dragged
+// Fragment INTO the one it's dropped on. No insertion lines, no "drop
+// into empty container" — every Fragment row is always a valid merge
+// target for every other Fragment row.
+
+let _fragmentDragId = null;
+
+function attachFragmentDragHandlers(rowEl, fragmentId) {
+  rowEl.addEventListener('dragstart', (e) => {
+    _fragmentDragId = fragmentId;
+    rowEl.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', fragmentId); // Firefox requires this to initiate drag at all
+  });
+  rowEl.addEventListener('dragend', () => {
+    rowEl.classList.remove('dragging');
+    document.querySelectorAll('.nav-row-fragment.drop-target-into').forEach(el => el.classList.remove('drop-target-into'));
+    _fragmentDragId = null;
+  });
+  rowEl.addEventListener('dragover', (e) => {
+    if (!_fragmentDragId || _fragmentDragId === fragmentId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    rowEl.classList.add('drop-target-into');
+  });
+  rowEl.addEventListener('dragleave', () => {
+    rowEl.classList.remove('drop-target-into');
+  });
+  rowEl.addEventListener('drop', (e) => {
+    if (!_fragmentDragId || _fragmentDragId === fragmentId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    rowEl.classList.remove('drop-target-into');
+    const draggedId = _fragmentDragId;
+    _fragmentDragId = null;
+    confirmAndMergeFragments(draggedId, fragmentId);
+  });
+}
+
+// confirmAndMergeFragments(mergedId, survivorId) — single confirmation
+// path shared by drag-drop and the picker modal, so both routes give
+// the same warning and the same outcome.
+function confirmAndMergeFragments(mergedId, survivorId) {
+  const mergedLabel = fragmentPreviewLabel(App.fragmentSummaries[mergedId] || {});
+  const survivorLabel = fragmentPreviewLabel(App.fragmentSummaries[survivorId] || {});
+  if (confirm(`Merge "${mergedLabel}" into "${survivorLabel}"? The first fragment will be appended and then deleted. This cannot be undone.`)) {
+    mergeFragmentsAndRefresh(mergedId, survivorId);
+  }
+}
+
+async function mergeFragmentsAndRefresh(mergedId, survivorId) {
+  const result = await NotesStore.mergeFragments(survivorId, mergedId);
+  if (!result) return;
+  delete App.fragmentSummaries[mergedId];
+  App.fragmentSummaries[survivorId] = {
+    id: survivorId, content: result.content || '', status: result.status || null,
+    lastInteractedAt: result.lastInteractedAt, updatedAt: result.updatedAt || 0,
+  };
+  // The merged-away fragment, if it had an open tab, must close — its
+  // id no longer resolves to anything.
+  if (App.openFragmentIds.includes(mergedId)) {
+    await closeFragmentTab(mergedId);
+  }
+  // If the survivor is the currently active Fragment and its tab is
+  // open, refresh the body textarea to show the newly-appended content.
+  if (App.activeNoteId === survivorId && App._activeIsFragment) {
+    App._bodyShowingNoteId = null; // force renderActiveNote to repopulate from the fresh content
+    renderActiveNote();
+  }
+  markDirty();
+  renderTabs();
+  renderNavTree();
+}
+
+// promoteFragmentToRemnant(id) — converts a Fragment record in place into
+// an ordinary Remnant: same id (no churn, no risk of a duplicate-id window
+// during sync), adds the fields a Remnant needs (title, chapterId, order)
+// that a Fragment record never had, and drops type/status/
+// lastInteractedAt entirely — once promoted, it's indistinguishable from
+// a Remnant that was always a Remnant; the decay clock is gone for good.
+async function promoteFragmentToRemnant(id) {
+  const fragment = await NotesStore.get(id);
+  if (!fragment || fragment.type !== 'fragment') return;
+
+  const siblingNotes = Object.values(App.noteSummaries).filter(n => !n.chapterId);
+  const order = nextOrder(siblingNotes);
+  const promoted = {
+    id,
+    chapterId: null, // lands in Loose Remnants, per spec — user can file it afterward like any other Remnant
+    title: 'Untitled Remnant',
+    content: fragment.content || '',
+    order,
+    createdAt: fragment.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+  await NotesStore.set(id, promoted); // overwrites the Fragment record — type/status/lastInteractedAt are gone, replaced wholesale
+
+  delete App.fragmentSummaries[id];
+  if (App.openFragmentIds.includes(id)) {
+    await closeFragmentTab(id);
+  }
+
+  App.noteSummaries[id] = { id, title: promoted.title, chapterId: null, order, updatedAt: promoted.updatedAt, type: null };
+  App.openNotes[id] = promoted;
+  if (!App.data.tabState.openIds.includes(id)) App.data.tabState.openIds.push(id);
+  setActiveNote(id);
+
+  markDirty();
+  renderTabs();
+  renderNavTree();
+  showToast('Promoted to Remnant');
+}
+
 
 
 
@@ -2334,6 +2701,7 @@ function renderActiveNote() {
   // overwrites the title placeholder for non-Cipher notes.
   if (App._activeIsFragment && id) {
     updateCipherControlsVisibility(null); // hides all Cipher-only chrome (buttons/banner/viewer) — none of it applies to a Fragment
+    updateFragmentControlsVisibility(id);
     const fragment = App.fragmentSummaries[id];
     if (!fragment) {
       titleEl.value = ''; bodyEl.value = '';
@@ -2352,6 +2720,7 @@ function renderActiveNote() {
     }
     return;
   }
+  updateFragmentControlsVisibility(null); // hide Merge/Promote buttons whenever a non-Fragment tab is active
 
   const summary = id ? App.noteSummaries[id] : null;
 
