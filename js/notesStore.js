@@ -51,6 +51,19 @@
  *   but-supposed-to-be-empty. cipher.js never touches notesStore.js
  *   directly and has no IndexedDB/KV awareness at all — it only knows how
  *   to turn (passphrase, plaintext) into an `encrypted` object and back.
+ *   Fragment (type: 'fragment' — an ephemeral, title-less note; see the
+ *   Fragment Lifecycle spec). No chapterId/title/order at all: Fragments
+ *   are never filed into a Book/Chapter and never manually reordered —
+ *   they always live in the single computed "Loose Fragments" bucket,
+ *   sorted by recency. content is plain text (never encrypted).
+ *     { id, type: 'fragment', content, status, lastInteractedAt,
+ *       createdAt, updatedAt }
+ *   status is either absent/undefined (a live, decaying Fragment) or
+ *   'dust' (expired past its 28-day lifespan, sitting in the 7-day Dust
+ *   limbo awaiting salvage or hard deletion). There is no separate Dust
+ *   store/type — it's the same record, same id, just flagged, so
+ *   salvaging is a one-field write (clear status, reset
+ *   lastInteractedAt) rather than a move between stores.
  *
  * API (all async):
  *   NotesStore.get(id)                  → note | null
@@ -75,6 +88,19 @@
  *
  *   NotesStore.clear()                  → void  — wipes notes, structure, AND scratchpad
  *
+ *   Fragment Lifecycle — all on the same `notes` store as Remnants/Ciphers,
+ *   discriminated by type:'fragment'. See FRAGMENT_LIFESPAN_MS /
+ *   FRAGMENT_DUST_MS below for the 28-day / 7-day windows.
+ *   NotesStore.createFragment(content)        → fragment record
+ *   NotesStore.getAllFragments()              → { [id]: fragment }  — every type:'fragment' record, live AND dusted
+ *   NotesStore.touchFragment(id)               → void  — bumps lastInteractedAt to now (any "meaningful interaction": edit/merge)
+ *   NotesStore.getFragmentStage(fragment)      → 0-3 (live) | 'dust' | 'expired'  — pure function, no I/O; see comment above its definition
+ *   NotesStore.mergeFragments(survivorId, mergedId) → fragment record | null — appends mergedId's content onto survivorId with a provenance line, deletes mergedId, resets survivor's clock
+ *   NotesStore.moveFragmentToDust(id)          → void  — sets status:'dust', does NOT touch lastInteractedAt (the Dust clock is computed from it)
+ *   NotesStore.salvageFragment(id)             → void  — clears status, resets lastInteractedAt to now
+ *   NotesStore.sweepFragments()                → { dusted: [...ids], deleted: [...ids] } — call once per load; moves expired live Fragments to Dust, hard-deletes Fragments whose Dust window has elapsed (logging each)
+ *   NotesStore.getDeletionLog()                → [{ snippet, deletedAt }, ...]  — newest first
+ *
  * Book shape:    { id, name, description, chapterIds: [], order, createdAt, updatedAt }
  * Chapter shape: { id, bookId, name, description, noteIds: [], order, createdAt, updatedAt }
  * Note shape:    see "Two record shapes" above
@@ -85,7 +111,8 @@ const NotesStore = (() => {
   const STRUCTURE_STORE   = 'structure';
   const SCRATCHPAD_STORE  = 'scratchpad';
   const SCRATCHPAD_KEY    = 'main';
-  const DB_VERSION        = 2; // v2 adds the structure store (Books/Chapters)
+  const DELETION_LOG_STORE = 'deletionLog'; // Dust hard-deletes only — see sweepFragments()
+  const DB_VERSION        = 3; // v3 adds the deletionLog store (Fragment Lifecycle)
 
   let _db = null;
 
@@ -98,6 +125,11 @@ const NotesStore = (() => {
         if (!db.objectStoreNames.contains(NOTES_STORE))      db.createObjectStore(NOTES_STORE);
         if (!db.objectStoreNames.contains(STRUCTURE_STORE))  db.createObjectStore(STRUCTURE_STORE);
         if (!db.objectStoreNames.contains(SCRATCHPAD_STORE)) db.createObjectStore(SCRATCHPAD_STORE);
+        if (!db.objectStoreNames.contains(DELETION_LOG_STORE)) {
+          // autoIncrement: log entries have no natural id and are never
+          // looked up individually — only ever listed in bulk, newest first.
+          db.createObjectStore(DELETION_LOG_STORE, { autoIncrement: true });
+        }
       };
       req.onsuccess = e => { _db = e.target.result; resolve(_db); };
       req.onerror   = e => reject(e.target.error);
@@ -270,7 +302,188 @@ const NotesStore = (() => {
   async function replaceAllBooks(booksObj)       { await _replacePrefixed(BOOK_PREFIX, booksObj); }
   async function replaceAllChapters(chaptersObj) { await _replacePrefixed(CHAPTER_PREFIX, chaptersObj); }
 
-  // ── Scratchpad (separate store — never appears in the notes collection) ──
+  // ── Fragment Lifecycle ──────────────────────────────────────────────
+  // Fragments share the `notes` store with Remnants/Ciphers (type:
+  // 'fragment'). See the file header for the record shape. All timing
+  // constants below are in ms so call sites never do day-math themselves.
+
+  const FRAGMENT_STAGE_MS   = 7  * 24 * 60 * 60 * 1000; // one icon-decay stage
+  const FRAGMENT_LIFESPAN_MS = 4 * FRAGMENT_STAGE_MS;    // 28 days total before Dust
+  const FRAGMENT_DUST_MS    = 7  * 24 * 60 * 60 * 1000;  // 7-day Dust limbo before hard delete
+
+  function newId() {
+    return (crypto?.randomUUID?.() || `frag_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  }
+
+  async function createFragment(content) {
+    const now = Date.now();
+    const fragment = {
+      id: newId(),
+      type: 'fragment',
+      content: content || '',
+      lastInteractedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await set(fragment.id, fragment);
+    return fragment;
+  }
+
+  // getAllFragments() — every type:'fragment' record, live AND dusted.
+  // Callers needing only one or the other should filter on `status`
+  // themselves (e.g. UI splits Loose Fragments vs. the Dust view).
+  async function getAllFragments() {
+    const all = await getAll();
+    const out = {};
+    for (const [id, note] of Object.entries(all)) {
+      if (note?.type === 'fragment') out[id] = note;
+    }
+    return out;
+  }
+
+  // touchFragment(id) — the ONLY thing that resets a Fragment's decay
+  // clock. Call this on every "meaningful interaction" per the spec:
+  // editing content, or as part of mergeFragments() below. Viewing a
+  // Fragment must NEVER call this.
+  async function touchFragment(id) {
+    const fragment = await get(id);
+    if (!fragment || fragment.type !== 'fragment') return;
+    fragment.lastInteractedAt = Date.now();
+    fragment.updatedAt = fragment.lastInteractedAt;
+    await set(id, fragment);
+  }
+
+  // getFragmentStage(fragment) — pure function, no I/O, safe to call from
+  // render code on every tick. Returns:
+  //   0-3      → live, in decay stage N (0 = freshest week, 3 = oldest week before Dust)
+  //   'dust'   → status is already 'dust' (icon/UI should NOT render a decay stage at all per spec)
+  //   'expired'→ still status-live in storage but its 28 days have elapsed;
+  //              callers should treat this as "about to be swept" — render
+  //              as stage 3 — and the next sweepFragments() call will flip
+  //              it to 'dust' for real. Exists so the UI never has to wait
+  //              for a sweep to reflect reality.
+  function getFragmentStage(fragment) {
+    if (!fragment) return null;
+    if (fragment.status === 'dust') return 'dust';
+    const age = Date.now() - fragment.lastInteractedAt;
+    if (age >= FRAGMENT_LIFESPAN_MS) return 'expired';
+    return Math.min(3, Math.floor(age / FRAGMENT_STAGE_MS));
+  }
+
+  // mergeFragments(survivorId, mergedId) — appends mergedId's content onto
+  // survivorId separated by a short plain-text provenance line, deletes
+  // mergedId outright, and resets survivorId's clock via touchFragment.
+  // There is no "Composite Fragment" type — the result is just a Fragment
+  // (see spec: merge history lives as inline content, not structured data).
+  // Returns the updated survivor record, or null if either id isn't a
+  // live fragment (no-op rather than throwing, since this is reachable
+  // from drag-and-drop UI where stale ids are possible).
+  async function mergeFragments(survivorId, mergedId) {
+    if (survivorId === mergedId) return null;
+    const survivor = await get(survivorId);
+    const merged   = await get(mergedId);
+    if (!survivor || survivor.type !== 'fragment') return null;
+    if (!merged   || merged.type   !== 'fragment') return null;
+
+    const provenance = `— merged fragment, ${new Date().toLocaleString()} —`;
+    survivor.content = `${survivor.content}\n\n${provenance}\n${merged.content}`;
+    survivor.updatedAt = Date.now();
+    await set(survivorId, survivor);
+    await del(mergedId);
+    await touchFragment(survivorId); // resets lastInteractedAt to now, full 28-day clock
+    return await get(survivorId);
+  }
+
+  // moveFragmentToDust(id) — flips status to 'dust'. Deliberately does NOT
+  // touch lastInteractedAt: the Dust 7-day countdown is computed as
+  // (now - lastInteractedAt - FRAGMENT_LIFESPAN_MS) by sweepFragments(),
+  // so the original decay timestamp must survive the transition.
+  async function moveFragmentToDust(id) {
+    const fragment = await get(id);
+    if (!fragment || fragment.type !== 'fragment') return;
+    fragment.status = 'dust';
+    await set(id, fragment);
+  }
+
+  // salvageFragment(id) — the ONLY sanctioned exit from Dust. Clears
+  // status and resets lastInteractedAt to now, per spec: salvaging grants
+  // a full fresh 28-day lifespan, not a partial restore.
+  async function salvageFragment(id) {
+    const fragment = await get(id);
+    if (!fragment || fragment.type !== 'fragment' || fragment.status !== 'dust') return;
+    delete fragment.status;
+    fragment.lastInteractedAt = Date.now();
+    fragment.updatedAt = fragment.lastInteractedAt;
+    await set(id, fragment);
+  }
+
+  // _logDeletion(content) — records a short content preview + timestamp
+  // for a Dust hard-delete. Deliberately stores ONLY a snippet, never the
+  // full content: the log is for "what did I lose and when," not a backup
+  // that would undercut Fragments' whole point of not living forever.
+  const DELETION_SNIPPET_LEN = 80;
+  async function _logDeletion(content) {
+    const raw = (content || '').trim().replace(/\s+/g, ' ');
+    const snippet = raw.length > DELETION_SNIPPET_LEN
+      ? raw.slice(0, DELETION_SNIPPET_LEN) + '…'
+      : (raw || '(empty fragment)');
+    try {
+      const s = await store(DELETION_LOG_STORE, 'readwrite');
+      await wrap(s.add({ snippet, deletedAt: Date.now() }));
+    } catch (e) { console.warn('[NotesStore] _logDeletion failed:', e); }
+  }
+
+  async function getDeletionLog() {
+    try {
+      const s = await store(DELETION_LOG_STORE, 'readonly');
+      const entries = await wrap(s.getAll());
+      return (entries || []).sort((a, b) => b.deletedAt - a.deletedAt);
+    } catch (e) {
+      console.warn('[NotesStore] getDeletionLog failed:', e);
+      return [];
+    }
+  }
+
+  // sweepFragments() — call once per app load (and optionally on a coarse
+  // background interval, mirroring the existing sync-check pattern in
+  // app.js). Two passes over the same data, kept structurally separate
+  // even though both stem from "is this Fragment too old":
+  //   1. live Fragments whose 28 days have elapsed → moved to Dust
+  //   2. dusted Fragments whose 7-day Dust window has elapsed → hard
+  //      deleted, no confirmation (per spec), logged via _logDeletion
+  // Single pass would conflate "just expired" with "already dusted," and
+  // a Fragment dusted ON THIS SAME SWEEP must never be immediately
+  // eligible for deletion in the same pass (its Dust clock starts now,
+  // not 28 days ago) — hence two explicit loops rather than one.
+  async function sweepFragments() {
+    const fragments = await getAllFragments();
+    const dusted = [];
+    const deleted = [];
+    const now = Date.now();
+
+    for (const fragment of Object.values(fragments)) {
+      if (fragment.status === 'dust') continue;
+      if (now - fragment.lastInteractedAt >= FRAGMENT_LIFESPAN_MS) {
+        await moveFragmentToDust(fragment.id);
+        dusted.push(fragment.id);
+      }
+    }
+
+    for (const fragment of Object.values(fragments)) {
+      if (fragment.status !== 'dust') continue;
+      if (dusted.includes(fragment.id)) continue; // just dusted above; Dust clock starts now, not eligible this sweep
+      const dustElapsed = now - fragment.lastInteractedAt - FRAGMENT_LIFESPAN_MS;
+      if (dustElapsed >= FRAGMENT_DUST_MS) {
+        await _logDeletion(fragment.content);
+        await del(fragment.id);
+        deleted.push(fragment.id);
+      }
+    }
+
+    return { dusted, deleted };
+  }
+
+
 
   async function getScratchpad() {
     try { return await wrap((await store(SCRATCHPAD_STORE, 'readonly')).get(SCRATCHPAD_KEY)); }
@@ -291,7 +504,8 @@ const NotesStore = (() => {
       const notesS  = await store(NOTES_STORE, 'readwrite');
       const structS = await store(STRUCTURE_STORE, 'readwrite');
       const padS    = await store(SCRATCHPAD_STORE, 'readwrite');
-      await Promise.all([wrap(notesS.clear()), wrap(structS.clear()), wrap(padS.clear())]);
+      const logS    = await store(DELETION_LOG_STORE, 'readwrite');
+      await Promise.all([wrap(notesS.clear()), wrap(structS.clear()), wrap(padS.clear()), wrap(logS.clear())]);
     } catch { /* ignore */ }
   }
 
@@ -300,6 +514,10 @@ const NotesStore = (() => {
     getBook, setBook, deleteBook, getAllBooks, replaceAllBooks,
     getChapter, setChapter, deleteChapter, getAllChapters, replaceAllChapters,
     getScratchpad, setScratchpad,
+    createFragment, getAllFragments, touchFragment, getFragmentStage,
+    mergeFragments, moveFragmentToDust, salvageFragment, sweepFragments,
+    getDeletionLog,
+    FRAGMENT_STAGE_MS, FRAGMENT_LIFESPAN_MS, FRAGMENT_DUST_MS,
     clear,
   };
 })();
