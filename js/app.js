@@ -1134,6 +1134,10 @@ function openDustModal() {
   openModal('modal-dust');
 }
 document.getElementById('dust-close-btn')?.addEventListener('click', () => closeModal('modal-dust'));
+document.getElementById('dust-deletion-log-link')?.addEventListener('click', () => {
+  closeModal('modal-dust');
+  openDeletionLogModal();
+});
 
 async function salvageFragmentAndRefresh(id) {
   await NotesStore.salvageFragment(id);
@@ -2209,12 +2213,6 @@ function buildFragmentsSection() {
   dustRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">Dust${dustCount ? ` (${dustCount})` : ''}</span>`;
   dustRow.addEventListener('click', () => openDustModal());
   childWrap.appendChild(dustRow);
-
-  const logRow = document.createElement('div');
-  logRow.className = 'nav-row nav-row-note nav-row-deletion-log-link';
-  logRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">Deletion Log</span>`;
-  logRow.addEventListener('click', () => openDeletionLogModal());
-  childWrap.appendChild(logRow);
 
   wrap.appendChild(childWrap);
   return wrap;
