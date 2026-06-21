@@ -374,6 +374,25 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .nav-row-add:hover { color: var(--brass-dark); }
 
+.nav-row-dust-link,
+.nav-row-deletion-log-link {
+  font-size: .8rem;
+  color: var(--muted);
+}
+.nav-row-dust-link:hover,
+.nav-row-deletion-log-link:hover { color: var(--brass-dark); background: var(--paper-dark); }
+
+/* Fragment drag-to-merge highlight — reuses the same visual language as
+   the Book/Chapter/Note "drop into" highlight (.drop-target-into) for
+   consistency, but is applied/removed by attachFragmentDragHandlers'
+   own self-contained logic, not the shared canDropOn/performDrop system. */
+.nav-row-fragment.drop-target-into {
+  outline: 2px solid var(--brass);
+  outline-offset: -2px;
+  background: var(--paper-dark);
+}
+
+
 /* Cipher rows are distinguished by label color alone — a deep rust/
    oxide tone — rather than a lock-icon badge. Targets .nav-row-cipher
    .nav-row-label specifically (not the whole row) so the caret, delete
@@ -701,6 +720,43 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .scratchpad-input::placeholder { color: var(--muted); opacity: .6; }
 
+/* "+ Create Fragment" strip — a fixed-height flex sibling below the
+   textarea (which keeps flex:1 and simply gets a little shorter), not
+   an overlay, so it never covers scratchpad content. */
+.scratchpad-fragment-strip {
+  flex-shrink: 0;
+  padding: .6rem 1rem;
+  text-align: center;
+  font-size: .82rem;
+  font-style: italic;
+  color: var(--brass);
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.scratchpad-fragment-strip:hover { background: var(--paper); color: var(--brass-dark); }
+
+/* Custom scratchpad context menu — only shown on right-click WITH an
+   active text selection (see app.js); positioned absolutely at the
+   cursor. */
+.scratchpad-context-menu {
+  position: absolute;
+  z-index: 50;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 4px 14px rgba(0,0,0,.18);
+  min-width: 160px;
+  padding: .3rem;
+}
+.scratchpad-context-menu-item {
+  padding: .45rem .7rem;
+  font-size: .85rem;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.scratchpad-context-menu-item:hover { background: var(--paper-dark); color: var(--brass-dark); }
+
+
 /* ── Toast ───────────────────────────────────────────────────────── */
 
 .toast {
@@ -770,6 +826,75 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .modal-close:hover { color: var(--ink); }
 
 .modal-body { padding: 1.4rem; }
+
+/* ── Fragment merge picker ───────────────────────────────────────── */
+
+.fragment-merge-list {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 1rem;
+}
+.fragment-merge-row {
+  padding: .6rem .8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: .88rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fragment-merge-row:hover { background: var(--paper-dark); border-color: var(--brass); }
+
+/* ── Dust modal ──────────────────────────────────────────────────── */
+
+.dust-list {
+  display: flex;
+  flex-direction: column;
+  gap: .7rem;
+}
+.dust-row {
+  padding: .75rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--paper-dark);
+}
+.dust-row-snippet {
+  font-size: .9rem;
+  margin-bottom: .35rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dust-row-meta {
+  font-size: .78rem;
+  color: var(--muted);
+  margin-bottom: .55rem;
+}
+.dust-row-salvage-btn { width: 100%; }
+
+/* ── Deletion log modal ──────────────────────────────────────────── */
+
+.deletion-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+.deletion-log-row {
+  padding: .6rem .8rem;
+  border-bottom: 1px solid var(--border);
+}
+.deletion-log-snippet {
+  font-size: .88rem;
+  margin-bottom: .2rem;
+}
+.deletion-log-meta {
+  font-size: .76rem;
+  color: var(--muted);
+}
 
 /* ── Terminology modal ───────────────────────────────────────────── */
 
