@@ -736,7 +736,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
    active text selection (see app.js); positioned absolutely at the
    cursor. */
 .scratchpad-context-menu {
-  position: absolute;
+  position: fixed;
   z-index: 50;
   background: var(--paper);
   border: 1px solid var(--border);
