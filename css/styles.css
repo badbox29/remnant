@@ -308,7 +308,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .nav-pin-btn.active { opacity: 1; }
 
 .nav-pin-icon {
-  height: 22px;
+  height: .75rem;
   width: auto;
   display: block;
 }
