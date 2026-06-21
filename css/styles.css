@@ -13,6 +13,7 @@
   --brass-dark:  #6E5639;
   --border:      #D8CFC0;
   --red:         #A8443B;
+  --oxide:       #7A3B2E;
   --green:       #5C7A5E;
   --blue-pale:   #DDE6E2;
 
@@ -320,7 +321,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   display: flex;
   align-items: center;
   gap: .35rem;
-  padding: .38rem .75rem;
+  padding: .24rem .75rem;
   cursor: pointer;
   user-select: none;
   position: relative;
@@ -359,12 +360,17 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .nav-row-add:hover { color: var(--brass-dark); }
 
-/* Cipher rows — minimal marker for stage 2; stage 3 (spotlight-reveal
-   editor) will likely also adjust how this reads when locked vs unlocked. */
-.nav-row-cipher-badge {
-  font-size: .7rem;
-  opacity: .7;
-  flex-shrink: 0;
+/* Cipher rows are distinguished by label color alone — a deep rust/
+   oxide tone — rather than a lock-icon badge. Targets .nav-row-cipher
+   .nav-row-label specifically (not the whole row) so the caret, delete
+   button, etc. stay in their normal colors and only the title itself
+   reads as "this one's a Cipher." Repeated with the .active selector
+   so the oxide color still wins when a Cipher is the open tab — without
+   this, .nav-row.active's own color rule (same specificity, comes later
+   in source order) would silently override it. */
+.nav-row-cipher .nav-row-label,
+.nav-row.active.nav-row-cipher .nav-row-label {
+  color: var(--oxide);
 }
 
 .nav-row-actions {
