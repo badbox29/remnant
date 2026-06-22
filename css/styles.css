@@ -603,13 +603,6 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden; /* the TEXTAREA (or the viewer) scrolls its own content internally; this wrapper must never grow taller than its flex box, or it could push .note-editor/.notes-column taller than the viewport, trapping scroll in a fixed-height ancestor further up the chain */
-}
-
-.note-body-wrap {
-  position: relative;
-  flex: 1;
-  min-height: 0;
   overflow: hidden; /* EasyMDE's own CodeMirror scroller handles internal scrolling — this wrapper must never grow taller than its flex box, or it could push .note-editor/.notes-column taller than the viewport, trapping scroll in a fixed-height ancestor further up the chain */
   display: flex;
   flex-direction: column;
@@ -643,7 +636,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .EasyMDEContainer .CodeMirror {
   flex: 1;
   min-height: 0;
-  height: auto; /* override CodeMirror's own default min-height:300px sizing — Remnant's flex layout controls actual height */
+  height: 100%; /* fills the flex-allocated space exactly — CodeMirror's internal .CodeMirror-scroll only scrolls when THIS element has a real bounded height; height:auto (the previous value here) told it to just grow to fit all content instead, which is why mouse-wheel scrolling did nothing — there was nothing to scroll, the whole editor just kept expanding */
   border: none;
   background: transparent;
   color: var(--ink);
@@ -652,7 +645,10 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   line-height: 1.7;
   padding: 0;
 }
-.EasyMDEContainer .CodeMirror-scroll { min-height: 0; }
+.EasyMDEContainer .CodeMirror-scroll {
+  min-height: 0;
+  height: 100%; /* this is CodeMirror's actual scrolling element — needs the same real-height treatment as its parent, not just min-height:0, or it inherits the same "grow forever" behavior */
+}
 .EasyMDEContainer .CodeMirror-placeholder { color: var(--muted) !important; opacity: .6; }
 .EasyMDEContainer .CodeMirror-cursor { border-left-color: var(--ink); }
 .EasyMDEContainer .CodeMirror-selected { background: var(--paper-dark); }
