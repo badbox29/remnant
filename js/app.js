@@ -2783,6 +2783,17 @@ function updateCipherControlsVisibility(id) {
 }
 
 function renderActiveNote() {
+  renderActiveNoteInner();
+  // Runs after EVERY exit path of renderActiveNoteInner (it has several
+  // early returns across Fragment/Cipher/Remnant/empty-state branches) —
+  // wrapping it here, rather than calling autoGrowTitle() before each
+  // individual return, means a future branch added inside can't
+  // accidentally forget to keep the title's height in sync with
+  // whatever value was just assigned to it.
+  autoGrowTitle();
+}
+
+function renderActiveNoteInner() {
   const titleEl = document.getElementById('note-title-input');
   const bodyEl  = document.getElementById('note-body-input');
   const id      = App.activeNoteId;
@@ -3248,6 +3259,36 @@ function scheduleSaveActive() {
 document.getElementById('note-title-input')?.addEventListener('input', scheduleSaveActive);
 document.getElementById('note-body-input')?.addEventListener('input', scheduleSaveActive);
 document.getElementById('scratchpad-input')?.addEventListener('input', scheduleSaveScratchpad);
+
+// ─── Title field: auto-grow + Enter-to-body ─────────────────────────
+//
+// note-title-input is a <textarea> (not an <input>) so long titles wrap
+// instead of clipping/scrolling on narrow/mobile widths — see styles.css
+// for the wrapping rules. A plain textarea doesn't grow with its content
+// on its own, so height is kept in sync here on every input, exactly the
+// pattern jsdom/browsers expect for auto-grow textareas: collapse to
+// 'auto' first (so shrinking a title back down actually shrinks the box,
+// not just growing), then set height to the resulting natural scrollHeight.
+//
+// Enter is deliberately swallowed rather than allowed to insert a literal
+// newline — titles were single-line via <input> before this change, and
+// preserving that (move focus to the body instead, like a form's "next
+// field" behavior) avoids a multi-line title becoming possible by accident.
+const titleInputEl = document.getElementById('note-title-input');
+
+function autoGrowTitle() {
+  if (!titleInputEl) return;
+  titleInputEl.style.height = 'auto';
+  titleInputEl.style.height = `${titleInputEl.scrollHeight}px`;
+}
+titleInputEl?.addEventListener('input', autoGrowTitle);
+
+titleInputEl?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('note-body-input')?.focus();
+  }
+});
 
 // Mobile pop-out toggle. No-op on desktop (button is CSS-hidden there,
 // but harmless if clicked since the column is already always visible).
