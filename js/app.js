@@ -583,8 +583,24 @@ function placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) {
   const bodyEl = getBodyEl();
   const blockEl = bodyEl.children[blockIndex];
   if (!blockEl) return;
-  const textNode = blockEl.firstChild;
-  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+
+  // An EMPTY block (raw text '') renders as a childless element — HTML
+  // parsing strips an empty text node entirely, there's no way around
+  // that via markup alone (see markdown.js renderBlockRaw). Without
+  // this fallback, placeCursorInRawBlock would silently do nothing for
+  // every blank line in a document, leaving the browser to fall back
+  // to its own default click-positioning behavior — which is NOT
+  // "cursor stays in this empty block," it's "cursor lands wherever
+  // the browser feels like," typically the start of the NEXT element.
+  // That mismatch (App._bodyActiveBlockIndex pointing at the empty
+  // block while the REAL cursor sits in a different block entirely) is
+  // exactly what let an unrelated edit/Enter sequence corrupt content —
+  // this fix closes that gap at its source.
+  let textNode = blockEl.firstChild;
+  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+    textNode = document.createTextNode('');
+    blockEl.appendChild(textNode);
+  }
 
   const clamped = Math.max(0, Math.min(rawOffsetWithinBlock, textNode.textContent.length));
   const range = document.createRange();
