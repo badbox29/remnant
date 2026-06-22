@@ -92,6 +92,14 @@ const App = {
   openFragmentIds: [],     // ordered array of Fragment ids currently open as tabs, NEVER persisted
   fragmentSummaries: {},   // { [id]: { id, content, status, lastInteractedAt, updatedAt } } — for Loose Fragments tree + tabs, rebuilt on boot/after sweep
   _activeIsFragment: false, // true iff App.activeNoteId currently refers to an open Fragment tab, not a Remnant/Cipher
+
+  // ── Markdown live-preview state (note-body-input) ──────────────────
+  // See the "Markdown live-preview architecture" comment above
+  // getBodyText/setBodyText for the full design. Both fields describe
+  // the CURRENTLY DISPLAYED body only — reset by setBodyText whenever
+  // the active tab changes.
+  _bodyRawText: '',          // the body's actual Markdown source — the only source of truth, never derived from the DOM
+  _bodyActiveBlockIndex: null, // index into segmentIntoBlocks(_bodyRawText) of the block currently shown raw/editable, or null if none
 };
 
 // Default data shape (localStorage). Note CONTENT is never stored here —
@@ -384,30 +392,438 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 // note-body-input is a contentEditable <div> — see index.html/styles.css
 // for why (Markdown live-rendering needs to mix rendered HTML spans with
 // plain editable text in the same flow, which a <textarea> structurally
-// cannot do). These helpers are the single place that knows the actual
-// DOM mechanics, so every call site reads as "what" rather than "how":
-//   getBodyText()         → current content (plain text only, for now —
-//                           no Markdown rendering exists yet, so
-//                           textContent is exactly the raw content)
-//   setBodyText(value)    → replace content. Uses textContent specifically
-//                           (not innerHTML) so this is never an HTML-
-//                           injection vector even before any rendering
-//                           logic exists, and so :empty placeholder
-//                           matching keeps working (innerHTML='' set via
-//                           some other path could leave a stray <br>).
-//   setBodyDisabled(bool) → toggles the contenteditable attribute itself;
-//                           CSS (.note-body-input[contenteditable="false"])
-//                           handles the dimmed look.
-//   setBodyPlaceholder(s) → sets data-placeholder, which the :empty::before
-//                           CSS rule reads.
+// cannot do).
+//
+// ── Markdown live-preview architecture ──────────────────────────────
+//
+// The body's RAW markdown text is the single source of truth — tracked
+// in App._bodyRawText, NOT read back out of the DOM via textContent.
+// This matters because the DOM, once rendering is active, contains a
+// MIX of rendered HTML (stripped of syntax markers, e.g. a header's "##
+// " prefix is gone) and one raw/editable block (the one the cursor is
+// currently in). Concatenating .textContent across that mix would NOT
+// reconstruct the original markdown — it would silently lose every
+// syntax marker stripped from every rendered block, which is exactly
+// the kind of silent corruption the round-trip-fidelity rule (see
+// markdown.js) forbids. getBodyText() therefore returns
+// App._bodyRawText directly; nothing here ever derives "current
+// content" from the rendered DOM.
+//
+// The DOM is rebuilt as one real child element per Markdown.Block (see
+// segmentIntoBlocks), diffed against the PREVIOUS render so unaffected
+// blocks' DOM nodes are left untouched — wholesale innerHTML replacement
+// on every keystroke would constantly destroy and recreate the very
+// node the cursor is inside, which is a well-known way to make
+// contentEditable unusable (cursor jumps, broken IME composition,
+// broken undo).
+//
+// Exactly ONE block (App._bodyActiveBlockIndex) is shown RAW/editable
+// at a time — the one the cursor is currently inside, per spec ("press
+// Enter / leave the construct -> renders; click/arrow back onto it ->
+// shows raw syntax again"). null means no block is in raw mode (cursor
+// isn't in the body at all, or the body has no content).
 function getBodyEl() { return document.getElementById('note-body-input'); }
-function getBodyText() { return getBodyEl().textContent; }
-function setBodyText(value) { getBodyEl().textContent = value || ''; }
+
+function getBodyText() { return App._bodyRawText || ''; }
+
+// setBodyText(value) — the ONLY entry point that resets the body to a
+// brand-new document (switching tabs, opening a different note/Fragment/
+// Cipher). Always starts with NO active raw block — whatever was being
+// edited belongs to the PREVIOUS note, not this one.
+function setBodyText(value) {
+  App._bodyRawText = value || '';
+  App._bodyActiveBlockIndex = null;
+  renderMarkdownBody();
+}
+
 function setBodyDisabled(disabled) {
   const el = getBodyEl();
   el.setAttribute('contenteditable', disabled ? 'false' : 'true');
 }
 function setBodyPlaceholder(text) { getBodyEl().setAttribute('data-placeholder', text); }
+
+// ── Markdown live-preview: rendering + cursor tracking ──────────────
+//
+// renderMarkdownBody() rebuilds note-body-input's children to match
+// App._bodyRawText, with App._bodyActiveBlockIndex (if not null) shown
+// raw/editable and every other block rendered. DIFFED against the
+// existing children — see the architecture comment above — so calling
+// this on every keystroke doesn't fight the cursor.
+function renderMarkdownBody() {
+  const el = getBodyEl();
+  const blocks = Markdown.segmentIntoBlocks(App._bodyRawText);
+  const activeIndex = App._bodyActiveBlockIndex;
+
+  // Build the desired HTML string for each block position.
+  const desiredHtml = blocks.map((block, i) =>
+    i === activeIndex ? Markdown.renderBlockRaw(block) : Markdown.renderBlock(block)
+  );
+
+  const existing = Array.from(el.children);
+
+  // Reconcile child count first — trim excess, or append missing,
+  // BEFORE diffing content, so the index-by-index comparison below
+  // always lines up with the right desired slot.
+  while (existing.length > desiredHtml.length) {
+    el.removeChild(existing.pop());
+  }
+
+  for (let i = 0; i < desiredHtml.length; i++) {
+    if (i >= existing.length) {
+      // New block — append a fresh node built from the desired HTML.
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = desiredHtml[i];
+      const node = wrapper.firstElementChild;
+      el.appendChild(node);
+      existing.push(node);
+    } else if (existing[i].outerHTML !== desiredHtml[i]) {
+      // Changed block — replace just this one node, leaving every
+      // sibling (and their cursor/selection state, if the selection
+      // isn't actually inside THIS node) untouched.
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = desiredHtml[i];
+      const node = wrapper.firstElementChild;
+      el.replaceChild(node, existing[i]);
+      existing[i] = node;
+    }
+    // else: identical HTML already in place — skip entirely, this is
+    // what lets typing inside the active raw block avoid any DOM
+    // surgery on every keystroke (the active block's content changes,
+    // but renderMarkdownBody is only called on the TRIGGER events, not
+    // on every input — see scheduleSaveActive/the input listener below
+    // for how raw text edits flow into App._bodyRawText without
+    // forcing a re-render of the block the user is actively typing in).
+  }
+}
+
+// ── Cursor position <-> raw text offset mapping ─────────────────────
+//
+// findBlockIndexAtNode(node) — walks up from any DOM node (typically
+// Selection.anchorNode, which for a text node is the text node itself,
+// not its parent element) to the nearest ancestor carrying .md-block,
+// and returns that block's index among note-body-input's children.
+// Returns null if no such ancestor exists (selection isn't in the body
+// at all — e.g. focus is in the title field or elsewhere on the page).
+function findBlockIndexAtNode(node) {
+  const bodyEl = getBodyEl();
+  let el = node && node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  while (el && el !== bodyEl) {
+    if (el.classList && el.classList.contains('md-block')) {
+      return Array.from(bodyEl.children).indexOf(el);
+    }
+    el = el.parentElement;
+  }
+  return null;
+}
+
+// rawOffsetAtCursor(blockIndex) — given the block the cursor is
+// CURRENTLY rendered inside (not yet in raw mode), compute the raw-text
+// character offset within that block's raw source the cursor visually
+// corresponds to. Returns 0 for block types with no meaningful
+// content-text offset (hr) or where rendered text structure doesn't
+// map 1:1 to a single text node (code blocks are already raw, so this
+// is never called for them — see callers).
+//
+// Mechanics: Selection.getRangeAt(0) gives the rendered DOM position;
+// since every non-code rendered block (header/blockquote/list-item/
+// paragraph) is built as ONE element containing exactly one text
+// node for its content (see markdown.js renderBlock), the offset
+// within that text node IS the rendered-text offset, and adding
+// decorationPrefixLength gets the raw offset directly — no need to
+// walk multiple text nodes or sum sibling lengths, because there's
+// only ever one relevant text node per these block types.
+function rawOffsetAtCursor(blockIndex, block) {
+  const prefix = Markdown.decorationPrefixLength(block);
+  if (prefix === null) return 0; // hr, or (shouldn't happen) code — no content-text offset to preserve
+
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return prefix; // no selection at all — land right after the decoration, start of content
+
+  const range = sel.getRangeAt(0);
+  const bodyEl = getBodyEl();
+  const blockEl = bodyEl.children[blockIndex];
+  if (!blockEl) return prefix;
+
+  // For list items, the content text node is the SECOND child (after
+  // the .md-bullet span) — for everything else it's the element's own
+  // only child text node. Find whichever text node the range's start
+  // actually falls in, defaulting to "end of content" if the click
+  // landed on the element itself rather than inside its text (e.g.
+  // clicking in trailing whitespace past the last character).
+  let textNode = null;
+  const walker = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node === range.startContainer) { textNode = node; break; }
+  }
+  if (!textNode) {
+    // Range didn't land directly in a text node (common when clicking
+    // at the very end of an element, past the last character) — use
+    // the LAST text node's full length as "end of content," which for
+    // these single-text-node block types is exactly right.
+    let last = null;
+    const walker2 = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
+    let n2;
+    while ((n2 = walker2.nextNode())) last = n2;
+    return prefix + (last ? last.textContent.length : 0);
+  }
+
+  return prefix + range.startOffset;
+}
+
+// placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) — the inverse
+// of rawOffsetAtCursor: given a block now shown RAW (plain text, one
+// text node, per renderBlockRaw), place the DOM cursor at the character
+// offset within that block's raw text. Used when entering raw mode, to
+// satisfy "cursor should land at the same character position it was
+// at" — rawOffsetWithinBlock here is already relative to the block's
+// OWN raw text (i.e. already had any earlier blocks' lengths
+// subtracted out by the caller).
+function placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) {
+  const bodyEl = getBodyEl();
+  const blockEl = bodyEl.children[blockIndex];
+  if (!blockEl) return;
+  const textNode = blockEl.firstChild;
+  if (!textNode || textNode.nodeType !== Node.TEXT_NODE) return;
+
+  const clamped = Math.max(0, Math.min(rawOffsetWithinBlock, textNode.textContent.length));
+  const range = document.createRange();
+  range.setStart(textNode, clamped);
+  range.collapse(true);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+// syncRawTextFromActiveBlock() — call after any edit (input event)
+// while a block is in raw mode: reads that block's current (edited)
+// text straight from the DOM and splices it back into
+// App._bodyRawText at the right position, so the source of truth
+// reflects what was just typed. Does NOT re-render — the active
+// block's own DOM node is exactly what the user is looking at and
+// typing into; re-rendering it mid-keystroke would fight the cursor
+// for no benefit, since it's already showing raw text by definition.
+function syncRawTextFromActiveBlock() {
+  if (App._bodyActiveBlockIndex === null) return;
+  syncRawTextAtIndex(App._bodyActiveBlockIndex);
+}
+
+// syncRawTextAtIndex(idx) — the real implementation, parameterized by
+// block index rather than always reading App._bodyActiveBlockIndex.
+// Needed because code blocks are edited directly (their DOM <pre> IS
+// the raw text) WITHOUT ever being tracked via _bodyActiveBlockIndex —
+// see the click/arrow-key/Enter code-block branches — so syncing their
+// edits back into App._bodyRawText needs an explicit index instead.
+function syncRawTextAtIndex(idx) {
+  const blocks = Markdown.segmentIntoBlocks(App._bodyRawText);
+  if (idx === null || idx >= blocks.length) return;
+
+  const bodyEl = getBodyEl();
+  const blockEl = bodyEl.children[idx];
+  if (!blockEl) return;
+  const newBlockRaw = blockEl.textContent;
+
+  // Reassemble the full document: every block's raw text, newline-
+  // joined, with this one block's raw text swapped for its edited
+  // value. Blocks are already newline-delimited units (segmentIntoBlocks
+  // split on '\n'), so rejoining with '\n' reconstructs the document
+  // exactly EXCEPT for the one block that changed — which is the point.
+  const allRaw = blocks.map((b, i) => (i === idx ? newBlockRaw : b.raw));
+  App._bodyRawText = allRaw.join('\n');
+}
+
+// Alias used by the code-block Enter case — same function, name chosen
+// at that call site to make clear it's syncing a block that ISN'T the
+// (possibly null) App._bodyActiveBlockIndex.
+const syncRawTextFromActiveBlockless = syncRawTextAtIndex;
+
+// enterRawModeAt(blockIndex, rawOffsetWithinBlock) — the shared
+// implementation behind both click-to-edit and arrow-key-into-construct.
+// Re-renders with the new active index, then places the cursor.
+function enterRawModeAt(blockIndex, rawOffsetWithinBlock) {
+  if (App._bodyActiveBlockIndex === blockIndex) {
+    // Already the active block — just reposition the cursor (e.g. the
+    // user clicked a different character within the SAME already-raw
+    // block; no re-render needed at all).
+    placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock);
+    return;
+  }
+  App._bodyActiveBlockIndex = blockIndex;
+  renderMarkdownBody();
+  placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock);
+}
+
+// exitRawMode() — re-renders with NO active block, so whatever was
+// being edited renders per its construct. Called on every event that
+// means "the cursor is leaving this construct" (see spec: clicking
+// elsewhere, arrowing out, blurring the whole body, switching tabs).
+// Safe to call even when nothing is currently active (no-op render).
+function exitRawMode() {
+  if (App._bodyActiveBlockIndex === null) return;
+  App._bodyActiveBlockIndex = null;
+  renderMarkdownBody();
+}
+
+// handleBodyClick(e) — click anywhere in note-body-input. Determines
+// which block was clicked and whether it's already raw or needs to
+// become raw, preserving cursor position per the offset-mapping
+// functions above. A click on a DIFFERENT block than the currently
+// active one implicitly means "leave the old one" — exitRawMode's
+// effect is folded into enterRawModeAt's re-render (only one block is
+// ever active at a time, so activating a new one already deactivates
+// the old).
+function handleBodyClick(e) {
+  const blockIndex = findBlockIndexAtNode(e.target);
+  if (blockIndex === null) return;
+
+  const blocks = Markdown.segmentIntoBlocks(App._bodyRawText);
+  const block = blocks[blockIndex];
+  if (!block) return;
+
+  if (block.type === 'code') {
+    // Code blocks have no separate "raw vs rendered" distinction at
+    // all — renderBlock's own 'code' branch ALREADY shows the exact
+    // raw text (fences included) inside a <pre><code>, per spec
+    // ("whole block renders together only once the closing fence is
+    // typed" — there is no earlier "rendered" form to revert FROM).
+    // Critically, this means App._bodyActiveBlockIndex must NOT be set
+    // to this block's index — renderMarkdownBody() would then call
+    // renderBlockRaw() instead of renderBlock() for it, replacing the
+    // <pre><code> with a generic <div>, which is both visually wrong
+    // and pointless (renderBlockRaw would just show the same text
+    // renderBlock already shows). The click's normal browser behavior
+    // (placing a text cursor in the existing <pre>'s content) is
+    // already exactly correct — nothing else needs to happen here.
+    if (App._bodyActiveBlockIndex !== null) {
+      // A DIFFERENT block (not code) was active — that one DOES need
+      // to revert to rendered form now that focus has moved away from
+      // it, even though this click landed on a code block rather than
+      // another single-line construct.
+      exitRawMode();
+    }
+    return;
+  }
+
+  if (App._bodyActiveBlockIndex === blockIndex) return; // already raw and active — let the browser's own click-to-position-cursor behavior stand, do nothing extra
+
+  // Cursor is currently rendered (not yet raw) in this block — read its
+  // position THERE before re-rendering destroys that DOM state.
+  const offset = rawOffsetAtCursor(blockIndex, block);
+  enterRawModeAt(blockIndex, offset);
+}
+
+// handleBodyKeydown(e) — arrow-key navigation across block boundaries.
+// Enter is handled separately below (it always means "leave the
+// current construct," same as arrowing down out of it, but Enter ALSO
+// needs to insert an actual newline into the raw text first).
+function handleBodyKeydown(e) {
+  if (e.key === 'Enter') {
+    // Enter must be fully intercepted — a contentEditable div's default
+    // Enter behavior varies by browser (sometimes a <div>, sometimes a
+    // <br>, sometimes splitting the current element) and none of those
+    // outcomes match "split the RAW TEXT at the cursor and insert an
+    // actual \n," which is the only behavior that keeps
+    // App._bodyRawText correct. preventDefault unconditionally, then
+    // do the split ourselves.
+    e.preventDefault();
+
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+
+    // Code blocks: no block-splitting at all — Enter just grows the
+    // SAME block with an extra line, since a multi-line code block is
+    // already one continuous raw-text unit (see the click/arrow-key
+    // code-block branches for why App._bodyActiveBlockIndex is never
+    // set to a code block's index — there's no raw/rendered toggle to
+    // manage here, just literal text editing inside an already-raw
+    // <pre>).
+    const clickedBlockIndex = findBlockIndexAtNode(sel.anchorNode);
+    if (clickedBlockIndex !== null) {
+      const blocksNow = Markdown.segmentIntoBlocks(App._bodyRawText);
+      if (blocksNow[clickedBlockIndex] && blocksNow[clickedBlockIndex].type === 'code') {
+        const range = sel.getRangeAt(0);
+        const newlineNode = document.createTextNode('\n');
+        range.insertNode(newlineNode);
+        range.setStartAfter(newlineNode);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+        syncRawTextFromActiveBlockless(clickedBlockIndex); // see helper below — code blocks aren't tracked via _bodyActiveBlockIndex, so the normal sync path doesn't apply
+        scheduleSaveActive();
+        return;
+      }
+    }
+
+    const idx = App._bodyActiveBlockIndex;
+    if (idx === null) return; // shouldn't happen — Enter implies focus is somewhere in the body, which always has an active block once any non-code block has been clicked/typed into; defensive no-op otherwise
+
+    const range = sel.getRangeAt(0);
+
+    // The active block is shown RAW (renderBlockRaw — one plain text
+    // node), so the cursor's offset within THAT text node is already
+    // the raw-text offset within the block, no decoration math needed
+    // (unlike rawOffsetAtCursor, which is only for RENDERED blocks).
+    const offsetWithinBlock = range.startContainer.nodeType === Node.TEXT_NODE
+      ? range.startOffset
+      : (getBodyEl().children[idx]?.textContent.length || 0); // cursor landed on the element itself, not its text node — treat as end-of-content
+
+    const blocks = Markdown.segmentIntoBlocks(App._bodyRawText);
+    const blockRaw = blocks[idx] ? blocks[idx].raw : '';
+    const before = blockRaw.slice(0, offsetWithinBlock);
+    const after  = blockRaw.slice(offsetWithinBlock);
+
+    // Splice: this block's raw text becomes "before", followed by a
+    // BRAND NEW block "after" (which starts life as a fresh, empty-or-
+    // partial line — possibly empty if Enter was pressed at the very
+    // end). Every other block's raw text is untouched.
+    const newBlocksRaw = blocks.map((b, i) => (i === idx ? before : b.raw));
+    newBlocksRaw.splice(idx + 1, 0, after);
+    App._bodyRawText = newBlocksRaw.join('\n');
+
+    // Land in raw mode on the NEW block (idx + 1) — it's the line the
+    // cursor visually continues onto, and per spec it has nothing
+    // rendered yet to leave (an empty/partial new line has no
+    // completed construct), so it starts editable. offsetWithinBlock
+    // 0 because the cursor goes to the START of whatever moved onto
+    // the new line (mirrors normal Enter-key behavior: cursor follows
+    // the text that moved past the split point, landing right before it).
+    App._bodyActiveBlockIndex = idx + 1;
+    renderMarkdownBody();
+    placeCursorInRawBlock(idx + 1, 0);
+    syncRawTextFromActiveBlock(); // harmless no-op here (nothing changed since render), but keeps the invariant "always synced after a body mutation" airtight
+    scheduleSaveActive();
+    return;
+  }
+
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    // Let the browser move the cursor first (synchronously this event
+    // can't know the POST-move position), then check on the next tick
+    // whether that move landed in a different block than is currently
+    // active, and react accordingly.
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return;
+      const newBlockIndex = findBlockIndexAtNode(sel.anchorNode);
+      if (newBlockIndex === App._bodyActiveBlockIndex) return; // moved within the same block — nothing to do
+      if (newBlockIndex === null) { exitRawMode(); return; }
+
+      const blocks = Markdown.segmentIntoBlocks(App._bodyRawText);
+      const block = blocks[newBlockIndex];
+      if (!block) { exitRawMode(); return; }
+
+      if (block.type === 'code') {
+        // Same reasoning as handleBodyClick's code-block branch: code
+        // blocks have no raw/rendered distinction, so the active index
+        // must stay out of it — just make sure whatever WAS active
+        // (if anything, and it isn't this) reverts to rendered form.
+        if (App._bodyActiveBlockIndex !== null) exitRawMode();
+        return;
+      }
+      const offset = rawOffsetAtCursor(newBlockIndex, block);
+      enterRawModeAt(newBlockIndex, offset);
+    }, 0);
+  }
+}
 
 function generateNoteId() {
   return 'n_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -3286,8 +3702,30 @@ function scheduleSaveActive() {
   else scheduleSaveActiveNote();
 }
 document.getElementById('note-title-input')?.addEventListener('input', scheduleSaveActive);
-document.getElementById('note-body-input')?.addEventListener('input', scheduleSaveActive);
+document.getElementById('note-body-input')?.addEventListener('input', () => {
+  // Markdown live-preview: the active raw block is the only thing that
+  // can have changed from a plain 'input' event (every other block is
+  // rendered/non-editable text — see renderMarkdownBody). Sync BEFORE
+  // scheduling the debounced save, not after, so App._bodyRawText
+  // (the source of truth read by every save path) never lags behind
+  // what's actually on screen, even mid-keystroke before the debounce
+  // fires.
+  syncRawTextFromActiveBlock();
+  scheduleSaveActive();
+});
 document.getElementById('scratchpad-input')?.addEventListener('input', scheduleSaveScratchpad);
+
+document.getElementById('note-body-input')?.addEventListener('click', handleBodyClick);
+document.getElementById('note-body-input')?.addEventListener('keydown', handleBodyKeydown);
+document.getElementById('note-body-input')?.addEventListener('blur', () => {
+  // Losing focus on the body ENTIRELY (not just moving between blocks
+  // within it — that's handled by handleBodyKeydown/handleBodyClick)
+  // also counts as "leaving the construct," per spec: clicking the
+  // title field, switching tabs, clicking outside the editor entirely
+  // should all render whatever was left in raw mode, not leave it
+  // stuck raw until the user happens to click back into the body first.
+  exitRawMode();
+});
 
 // ─── Title field: auto-grow + Enter-to-body ─────────────────────────
 //

@@ -251,10 +251,77 @@ const Markdown = (() => {
     }
   }
 
+  // ── Offset mapping: rendered text position <-> raw text position ──
+  //
+  // decorationPrefixLength(block) — how many raw characters precede the
+  // construct's actual content text. E.g. for "## Hello", the prefix is
+  // "## " (3 chars) — clicking at rendered-text-offset N inside "Hello"
+  // corresponds to raw-text-offset (N + 3). This exists specifically so
+  // app.js can preserve exact cursor position when a rendered construct
+  // reverts to raw/editable on click (see spec: "cursor should land at
+  // the same character position it was at"). Returns null for blocks
+  // with no single well-defined content-text offset to map AT ALL
+  // (code blocks — multi-line, the "click position" is already inside
+  // literal raw text being shown, so no mapping is needed; callers
+  // should treat code blocks as already-raw and skip this entirely).
+  // hr has no content text either (nothing to click "into" by
+  // character position) — callers map any click on an <hr> to offset 0.
+  function decorationPrefixLength(block) {
+    if (block.type === 'code') return null; // code blocks render their raw text directly — no mapping needed, see above
+    const c = classifyLine(block.lines[0]);
+    switch (c.type) {
+      case 'header':     return c.level + 1; // "##" + " " = level chars + 1 space
+      case 'hr':          return null; // no content text to map into
+      case 'blockquote': {
+        // BLOCKQUOTE_RE optionally consumes one space after ">" — the
+        // actual prefix length depends on whether that space was
+        // present in THIS line, not a fixed constant.
+        const m = block.lines[0].match(/^>[ \t]?/);
+        return m ? m[0].length : 1;
+      }
+      case 'ul': {
+        const m = block.lines[0].match(/^[-*+][ \t]+/);
+        return m ? m[0].length : 2;
+      }
+      case 'ol': {
+        const m = block.lines[0].match(/^\d+\.[ \t]+/);
+        return m ? m[0].length : (c.number.length + 2);
+      }
+      case 'paragraph':
+      default:
+        return 0; // plain text has no decoration at all — rendered offset === raw offset
+    }
+  }
+
+  // renderBlockRaw(block) — the SAME .md-block wrapper element type/
+  // structure as renderBlock would produce for this block's type, but
+  // with the construct's styling/decoration stripped: just the literal
+  // raw text, plain. This is what the currently-being-edited block
+  // shows, per spec ("clicking onto a construct again will show the
+  // tags and whatnot so they can be edited"). Kept as a real .md-block
+  // (with the md-editing class added) rather than some other element
+  // shape so the cursor-tracking "walk up to nearest .md-block" logic
+  // in app.js never needs a special case for "currently editing."
+  // Always a <div> regardless of the block's rendered type — there's
+  // no reason to preserve e.g. an <h2> tag while showing raw text, and
+  // a uniform tag simplifies the DOM-diffing in app.js.
+  function renderBlockRaw(block) {
+    const dataRaw = `data-raw="${encodeRaw(block.raw)}"`;
+    // Multi-line raw content (code blocks) must preserve its internal
+    // newlines visually — white-space:pre-wrap on .md-block (set in
+    // styles.css for .md-code; .md-editing needs the same treatment,
+    // handled by the existing .note-body-input white-space:pre-wrap
+    // inherited rule, so no extra CSS needed here) means a plain
+    // escaped \n in text content already wraps correctly.
+    return `<div class="md-block md-editing" ${dataRaw}>${escapeHtml(block.raw)}</div>`;
+  }
+
   return {
     classifyLine,
     segmentIntoBlocks,
     renderBlock,
+    renderBlockRaw,
+    decorationPrefixLength,
     escapeHtml,
   };
 })();
