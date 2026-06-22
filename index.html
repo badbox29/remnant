@@ -75,6 +75,19 @@
       <!-- Tabs are rendered here by app.js: one per open note, plus a "+" new-note tab -->
     </div>
     <div class="note-editor" id="note-editor">
+      <!-- Shown INSTEAD OF the title row / toolbar / body when nothing
+           is open at all — see app.js renderActiveNoteInner's two
+           genuine "nothing open" branches, which toggle this and
+           note-editor-chrome's visibility as a strict either/or
+           (never both visible at once). Artwork + copy sourced from a
+           mockup design pass. -->
+      <div class="note-editor-empty-state" id="note-editor-empty-state">
+        <img class="empty-state-art" src="" id="empty-state-art" alt="" />
+        <h2 class="empty-state-heading">The archive awaits.</h2>
+        <div class="empty-state-divider"><span>✦</span></div>
+        <p class="empty-state-subtext">Make a selection from the library,<br />or click "+" to create something new.</p>
+      </div>
+      <div class="note-editor-chrome" id="note-editor-chrome">
       <div class="note-title-row">
         <textarea class="note-title-input" id="note-title-input" placeholder="Untitled remnant" rows="1"></textarea>
         <button class="btn btn-sm btn-outline cipher-illuminate-btn" id="cipher-illuminate-btn" style="display:none;">Illuminate</button>
@@ -101,6 +114,7 @@
              plaintext is meant to exist in memory at all, and editing
              requires a real editable text surface. -->
         <textarea class="note-body-input" id="note-body-input" data-placeholder="Start writing…" spellcheck="false"></textarea>
+      </div>
       </div>
     </div>
   </section>
