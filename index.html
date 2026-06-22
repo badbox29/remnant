@@ -295,14 +295,47 @@
 
       <div class="settings-tab-panel" id="settings-tab-panel-export-import">
         <div class="settings-section">
-          <p class="f13 lh muted" style="margin:0;">
-            Export and import are coming soon — you'll be able to back up
-            your entire Library to a zip file, with an option to decrypt
-            and include Ciphers.
-          </p>
+          <div class="settings-section-header">Export</div>
+          <div class="settings-section-body">
+            <p class="f13 lh muted" style="margin:0 0 .75rem 0;">
+              Downloads a zip mirroring your Library — Corpus → Scroll → Remnant
+              as folders, each Remnant/Cipher/Fragment as its own .md file.
+            </p>
+            <label class="row gap-8 f13 muted" style="cursor:pointer;margin-bottom:1rem;">
+              <input type="checkbox" id="export-include-ciphers" />
+              Decrypt and include Ciphers
+            </label>
+            <div class="form-actions">
+              <button class="btn btn-primary" id="export-start-btn">Export Library…</button>
+            </div>
+            <div id="export-status" class="f13 lh" style="min-height:1.3rem;margin-top:.6rem;"></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-section-header">Import</div>
+          <div class="settings-section-body">
+            <p class="f13 lh muted" style="margin:0 0 .75rem 0;">
+              Imports a zip previously exported from Remnant. Only Remnant's
+              own export format round-trips correctly — pasting arbitrary
+              Markdown into a Remnant body is the answer for other files.
+            </p>
+            <label class="row gap-8 f13 muted" style="cursor:pointer;margin-bottom:1rem;">
+              <input type="checkbox" id="import-prompt-cipher-passphrase" />
+              Prompt for passphrase on incoming Ciphers
+            </label>
+            <div class="form-actions">
+              <input type="file" id="import-file-input" accept=".zip" style="display:none;" />
+              <button class="btn btn-outline" id="import-pick-file-btn">Choose zip file…</button>
+              <button class="btn btn-primary" id="import-start-btn" style="display:none;">Import</button>
+            </div>
+            <div id="import-status" class="f13 lh" style="min-height:1.3rem;margin-top:.6rem;"></div>
+          </div>
         </div>
       </div>
 
+      <!-- Cipher passphrase prompt — reused for BOTH export's
+           batch-decrypt flow and import's per-Cipher prompt. Shape
     </div>
   </div>
 </div>
@@ -485,6 +518,43 @@
 </div>
 
 <!-- ════════════════════════════════════════════════════════════
+     Export/Import Cipher passphrase prompt — reused for BOTH export's
+     batch-decrypt flow and import's per-Cipher prompt. Driven by
+     app.js's promptExportImportPassphrase(), which resolves a promise
+     with either the entered passphrase, 'skip' (this one only), or
+     null (modal dismissed entirely) rather than unlocking a specific
+     note the way modal-cipher-unlock does.
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-exportimport-passphrase" role="dialog" aria-modal="true" aria-labelledby="exportimport-passphrase-title">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2 class="modal-title" id="exportimport-passphrase-title">Cipher passphrase</h2>
+      <button class="modal-close" id="exportimport-passphrase-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="f13 lh muted" id="exportimport-passphrase-context" style="margin-bottom:1rem;"></p>
+
+      <div class="form-group">
+        <label class="form-label">Passphrase</label>
+        <input class="input input-mono" type="password" id="exportimport-passphrase-input" placeholder="Enter passphrase…" autocomplete="off" />
+      </div>
+
+      <label class="row gap-8 f13 muted" id="exportimport-passphrase-useforall-row" style="cursor:pointer;margin-bottom:1rem;">
+        <input type="checkbox" id="exportimport-passphrase-useforall" />
+        Use this passphrase for all
+      </label>
+
+      <div id="exportimport-passphrase-error" style="min-height:1.3rem;font-size:.82rem;color:var(--red);margin-bottom:.5rem;"></div>
+
+      <div class="form-actions">
+        <button class="btn btn-outline" id="exportimport-passphrase-skip-btn">Skip this one</button>
+        <button class="btn btn-primary" id="exportimport-passphrase-submit-btn">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════
      Illuminate modal — re-enter the passphrase to view a Cipher in
      full, unmasked. Always re-prompts even if already unlocked this
      session; full exposure is treated as a bigger commitment than
@@ -593,6 +663,7 @@
 
 <script src="js/vendor/argon2.umd.min.js"></script>
 <script src="js/vendor/easymde.min.js"></script>
+<script src="js/vendor/fflate.min.js"></script>
 <script src="js/cipher.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/notesStore.js"></script>
