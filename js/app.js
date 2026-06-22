@@ -3340,8 +3340,28 @@ function openSettingsModal() {
 
   Auth.renderSettingsSection();
   updateLastSyncedLabel();
+  switchSettingsTab('user'); // always reopen on User — Export/Import is a placeholder for now, not worth remembering as "last tab" yet
   openModal('modal-settings');
 }
+
+// switchSettingsTab(tabKey) — plain show/hide between settings-tab-panel
+// elements, no re-render needed: nothing in either panel is dynamic per
+// tab beyond what Auth.renderSettingsSection() already populates once on
+// open. Extensible — a future "Themes" tab just needs a third
+// .settings-tab/.settings-tab-panel pair and works with this unchanged.
+function switchSettingsTab(tabKey) {
+  document.querySelectorAll('.settings-tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tabKey);
+  });
+  document.querySelectorAll('.settings-tab-panel').forEach(el => {
+    el.classList.toggle('active', el.id === `settings-tab-panel-${tabKey}`);
+  });
+}
+
+document.getElementById('settings-tab-bar')?.addEventListener('click', (e) => {
+  const tabEl = e.target.closest('.settings-tab');
+  if (tabEl) switchSettingsTab(tabEl.dataset.tab);
+});
 
 function saveSettingsProfileFields() {
   App.data.firstName = document.getElementById('settings-firstname-input').value.trim();
