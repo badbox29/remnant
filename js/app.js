@@ -534,41 +534,37 @@ function findBlockIndexAtNode(node) {
 // only ever one relevant text node per these block types.
 function rawOffsetAtCursor(blockIndex, block) {
   const prefix = Markdown.decorationPrefixLength(block);
-  if (prefix === null) return 0; // hr, or (shouldn't happen) code — no content-text offset to preserve
+  if (prefix === null) return { start: 0, end: 0 };
 
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0) return prefix; // no selection at all — land right after the decoration, start of content
+  if (!sel || sel.rangeCount === 0) return { start: prefix, end: prefix };
 
   const range = sel.getRangeAt(0);
   const bodyEl = getBodyEl();
   const blockEl = bodyEl.children[blockIndex];
-  if (!blockEl) return prefix;
+  if (!blockEl) return { start: prefix, end: prefix };
 
-  // For list items, the content text node is the SECOND child (after
-  // the .md-bullet span) — for everything else it's the element's own
-  // only child text node. Find whichever text node the range's start
-  // actually falls in, defaulting to "end of content" if the click
-  // landed on the element itself rather than inside its text (e.g.
-  // clicking in trailing whitespace past the last character).
-  let textNode = null;
-  const walker = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
-  let node;
-  while ((node = walker.nextNode())) {
-    if (node === range.startContainer) { textNode = node; break; }
-  }
-  if (!textNode) {
-    // Range didn't land directly in a text node (common when clicking
-    // at the very end of an element, past the last character) — use
-    // the LAST text node's full length as "end of content," which for
-    // these single-text-node block types is exactly right.
-    let last = null;
-    const walker2 = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
-    let n2;
-    while ((n2 = walker2.nextNode())) last = n2;
-    return prefix + (last ? last.textContent.length : 0);
+  function offsetOf(container, fallbackOffset) {
+    let textNode = null;
+    const walker = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node === container) { textNode = node; break; }
+    }
+    if (!textNode) {
+      let last = null;
+      const walker2 = document.createTreeWalker(blockEl, NodeFilter.SHOW_TEXT);
+      let n2;
+      while ((n2 = walker2.nextNode())) last = n2;
+      return prefix + (last ? last.textContent.length : 0);
+    }
+    return prefix + fallbackOffset;
   }
 
-  return prefix + range.startOffset;
+  return {
+    start: offsetOf(range.startContainer, range.startOffset),
+    end: offsetOf(range.endContainer, range.endOffset),
+  };
 }
 
 // placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) — the inverse
@@ -579,7 +575,7 @@ function rawOffsetAtCursor(blockIndex, block) {
 // at" — rawOffsetWithinBlock here is already relative to the block's
 // OWN raw text (i.e. already had any earlier blocks' lengths
 // subtracted out by the caller).
-function placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) {
+function placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock, rawEndOffsetWithinBlock) {
   const bodyEl = getBodyEl();
   const blockEl = bodyEl.children[blockIndex];
   if (!blockEl) return;
@@ -604,8 +600,14 @@ function placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock) {
 
   const clamped = Math.max(0, Math.min(rawOffsetWithinBlock, textNode.textContent.length));
   const range = document.createRange();
-  range.setStart(textNode, clamped);
-  range.collapse(true);
+  if (rawEndOffsetWithinBlock !== undefined && rawEndOffsetWithinBlock !== rawOffsetWithinBlock) {
+    const clampedEnd = Math.max(0, Math.min(rawEndOffsetWithinBlock, textNode.textContent.length));
+    range.setStart(textNode, Math.min(clamped, clampedEnd));
+    range.setEnd(textNode, Math.max(clamped, clampedEnd));
+  } else {
+    range.setStart(textNode, clamped);
+    range.collapse(true);
+  }
   const sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
@@ -656,17 +658,14 @@ const syncRawTextFromActiveBlockless = syncRawTextAtIndex;
 // enterRawModeAt(blockIndex, rawOffsetWithinBlock) — the shared
 // implementation behind both click-to-edit and arrow-key-into-construct.
 // Re-renders with the new active index, then places the cursor.
-function enterRawModeAt(blockIndex, rawOffsetWithinBlock) {
+function enterRawModeAt(blockIndex, rawOffsetWithinBlock, rawEndOffsetWithinBlock) {
   if (App._bodyActiveBlockIndex === blockIndex) {
-    // Already the active block — just reposition the cursor (e.g. the
-    // user clicked a different character within the SAME already-raw
-    // block; no re-render needed at all).
-    placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock);
+    placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock, rawEndOffsetWithinBlock);
     return;
   }
   App._bodyActiveBlockIndex = blockIndex;
   renderMarkdownBody();
-  placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock);
+  placeCursorInRawBlock(blockIndex, rawOffsetWithinBlock, rawEndOffsetWithinBlock);
 }
 
 // exitRawMode() — re-renders with NO active block, so whatever was
@@ -744,7 +743,7 @@ function handleBodyClick(e) {
   // Cursor is currently rendered (not yet raw) in this block — read its
   // position THERE before re-rendering destroys that DOM state.
   const offset = rawOffsetAtCursor(blockIndex, block);
-  enterRawModeAt(blockIndex, offset);
+  enterRawModeAt(blockIndex, offset.start, offset.end);
 }
 
 // handleBodyKeydown(e) — arrow-key navigation across block boundaries.
@@ -855,7 +854,7 @@ function handleBodyKeydown(e) {
         return;
       }
       const offset = rawOffsetAtCursor(newBlockIndex, block);
-      enterRawModeAt(newBlockIndex, offset);
+      enterRawModeAt(newBlockIndex, offset.start, offset.end);
     }, 0);
   }
 }
