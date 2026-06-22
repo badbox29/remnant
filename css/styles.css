@@ -967,6 +967,17 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .modal-overlay.open { display: flex; }
 
+/* The export/import passphrase prompt can open while the settings modal
+   is already open (export/import both live inside settings). Without a
+   higher z-index it shares z=100 with the settings overlay, and DOM
+   paint order is the only thing determining which overlay is "on top" —
+   unreliable, and the click-outside handler fires on BOTH simultaneously.
+   z=110 ensures this modal always paints above the settings overlay and
+   its own backdrop fully captures clicks, so the settings modal can't
+   be accidentally dismissed when the user interacts with the passphrase
+   prompt. */
+#modal-exportimport-passphrase { z-index: 110; }
+
 .modal {
   background: var(--paper);
   border-radius: var(--r-md);
