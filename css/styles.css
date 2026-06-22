@@ -11,6 +11,7 @@
   --muted:       #6B6256;
   --brass:       #8A6F4E;
   --brass-dark:  #6E5639;
+  --ink-soft:    #4F4337; /* sampled directly from the empty-state mockup's heading — sits between --ink and --brass-dark, no existing token matched closely enough */
   --border:      #D8CFC0;
   --red:         #A8443B;
   --oxide:       #7A3B2E;
@@ -577,7 +578,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 
 .empty-state-art {
-  width: 280px;
+  width: 360px;
   height: auto;
   margin-bottom: 1rem;
   opacity: .92; /* the artwork's own highlight tones already sit close to --paper (see asset notes) — a touch of opacity softens the remaining edge further rather than it reading as a pasted-on sticker */
@@ -586,8 +587,8 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .empty-state-heading {
   font-family: var(--font-display);
   font-size: 1.85rem;
-  font-weight: 600;
-  color: var(--ink);
+  font-weight: 400;
+  color: var(--ink-soft);
   margin: 0;
 }
 
