@@ -2914,6 +2914,12 @@ function renderActiveNoteInner() {
   const titleEl = document.getElementById('note-title-input');
   const id      = App.activeNoteId;
 
+  // Cleared unconditionally here, re-added ONLY by the two genuine
+  // "nothing open at all" branches below — every other branch
+  // (Fragment, Cipher in any state, normal note) represents something
+  // being open and should never show the dimmed/inert empty styling.
+  document.getElementById('note-editor').classList.remove('empty');
+
   // Fragments are title-less by design (see Fragment Lifecycle spec) —
   // the title field is hidden/disabled rather than just empty, so it
   // reads as "this kind of note doesn't have a title" rather than "the
@@ -2955,6 +2961,7 @@ function renderActiveNoteInner() {
     setBodyDisabled(true);
     setBodyPlaceholder('Nothing open — select something from the nav menu, or click "+" above to create a new entry.');
     App._bodyShowingNoteId = null;
+    document.getElementById('note-editor').classList.add('empty');
     return;
   }
 
@@ -3002,6 +3009,7 @@ function renderActiveNoteInner() {
     setBodyDisabled(true);
     setBodyPlaceholder('Nothing open — select something from the nav menu, or click "+" above to create a new entry.');
     App._bodyShowingNoteId = null;
+    document.getElementById('note-editor').classList.add('empty');
     return;
   }
   titleEl.disabled = false;
