@@ -608,10 +608,9 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 
 .note-body-input {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 1.5em; /* NOT inset:0 — reserving a bottom gap shrinks the textarea's own clientHeight, which genuinely increases its max scrollable distance (scrollHeight - clientHeight), giving the last line room to fully scroll into view. Textarea bottom-PADDING is a well-documented, unreliable cross-browser quirk for this same goal; shrinking the element's own box via bottom-inset is what actually works, because clientHeight is a direct term in the scroll-distance formula. */
+  top: 0; left: 0; right: 0; bottom: 1.5em; /* this inset was originally a textarea-specific scroll-quirk fix (see git history) — kept as-is through the contentEditable swap since a <div> may not need it, but removing it wasn't verified in a real browser yet; revisit if the bottom of long notes looks oddly cut off now that this is a div, not a textarea. */
   border: none;
   background: transparent;
-  resize: none;
   outline: none;
   color: var(--ink);
   font-family: var(--font-body);
@@ -619,7 +618,8 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   line-height: 1.7;
   padding: 0;
   overflow-y: auto;
-  /* Without this, a touch-drag inside the textarea is ambiguous between
+  white-space: pre-wrap; /* contentEditable's default browser behavior already wraps text and preserves most whitespace, but explicit pre-wrap keeps consecutive spaces/line breaks from collapsing the way plain HTML flow text normally would */
+  /* Without this, a touch-drag inside the body is ambiguous between
      "select text" and "scroll the page" on mobile, and browsers commonly
      default to selection — trapping the page with no way to scroll past
      what's already visible. pan-y explicitly allows vertical scrolling
@@ -627,7 +627,27 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
      browsers) a deliberate press-and-hold for selection. */
   touch-action: pan-y;
 }
-.note-body-input::placeholder { color: var(--muted); opacity: .6; }
+/* contentEditable has no native ::placeholder — this is the standard
+   CSS-only substitute: show a pseudo-element with the placeholder text
+   only while the div is genuinely empty, hide it (browsers do this
+   automatically) the instant any content/cursor changes things. Note:
+   :empty fails to match if the div contains so much as a stray <br> —
+   app.js must take care never to leave one behind when clearing content
+   (set textContent = '' exactly, not innerHTML with a lingering <br>). */
+.note-body-input:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  opacity: .6;
+  pointer-events: none;
+}
+/* Disabled state — contentEditable has no native disabled attribute;
+   toggling the contenteditable="false" attribute itself (done in JS)
+   removes editability, but browsers don't dim/style that for you the
+   way a real disabled form control would, so it's done explicitly here. */
+.note-body-input[contenteditable="false"] {
+  color: var(--muted);
+  cursor: default;
+}
 
 /* ── Cipher obscured viewer (read-only, per-line decrypt-on-demand) ──
    Shown instead of the textarea whenever a Cipher is unlocked but NOT
