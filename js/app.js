@@ -3488,7 +3488,7 @@ function openSettingsModal() {
 
   Auth.renderSettingsSection();
   updateLastSyncedLabel();
-  switchSettingsTab('user'); // always reopen on User — Export/Import is a placeholder for now, not worth remembering as "last tab" yet
+  switchSettingsTab('user'); // default to User tab on open
   openModal('modal-settings');
 }
 
@@ -3510,6 +3510,610 @@ document.getElementById('settings-tab-bar')?.addEventListener('click', (e) => {
   const tabEl = e.target.closest('.settings-tab');
   if (tabEl) switchSettingsTab(tabEl.dataset.tab);
 });
+
+// ─── Export / Import ─────────────────────────────────────────────────
+//
+// sanitizeFilenameComponent(str) — strips characters that are illegal
+// or awkward in filenames across Windows/macOS/Linux (the zip needs to
+// extract cleanly everywhere), collapses whitespace, and caps length so
+// a long title/snippet doesn't produce an unwieldy filename. NOT used
+// on folder names that come from "Loose Remnants"/"Loose Fragments"
+// literals (those are already filename-safe by construction) — only on
+// user-authored titles/content snippets.
+function sanitizeFilenameComponent(str) {
+  return (str || '')
+    .replace(/[\\/:*?"<>|]/g, '') // characters illegal on Windows; also awkward/ambiguous on Unix
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '') // trailing dots/spaces are also illegal on Windows, and look like a typo right before the .md extension (e.g. a content snippet ending in "...thought." would otherwise produce "thought..md")
+    .slice(0, 80) || 'Untitled';
+}
+
+// promptExportImportPassphrase(contextLabel, allowUseForAll) — shared by
+// export's Cipher batch-decrypt flow and import's per-Cipher prompt.
+// Returns a Promise resolving to:
+//   { passphrase: string, useForAll: boolean }  — passphrase entered, Continue clicked
+//   { skipped: true }                            — "Skip this one" clicked
+//   null                                          — modal closed/cancelled entirely
+// contextLabel is shown above the input (e.g. "Notes for Mark Meeting").
+// allowUseForAll hides the checkbox entirely when false (the SINGLE
+// one-off retry prompt after a batch passphrase fails must NOT offer
+// "use for all" again — see spec: a one-off passphrase never becomes
+// the new batch default).
+function promptExportImportPassphrase(contextLabel, allowUseForAll) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('modal-exportimport-passphrase');
+    const contextEl = document.getElementById('exportimport-passphrase-context');
+    const inputEl = document.getElementById('exportimport-passphrase-input');
+    const useForAllRow = document.getElementById('exportimport-passphrase-useforall-row');
+    const useForAllCheckbox = document.getElementById('exportimport-passphrase-useforall');
+    const errorEl = document.getElementById('exportimport-passphrase-error');
+    const submitBtn = document.getElementById('exportimport-passphrase-submit-btn');
+    const skipBtn = document.getElementById('exportimport-passphrase-skip-btn');
+    const closeBtn = document.getElementById('exportimport-passphrase-close-btn');
+
+    contextEl.textContent = contextLabel;
+    inputEl.value = '';
+    useForAllCheckbox.checked = false;
+    useForAllRow.style.display = allowUseForAll ? '' : 'none';
+    errorEl.textContent = '';
+
+    // Each call replaces the previous listeners entirely (rather than
+    // accumulating them across repeated prompts in one batch) by
+    // cloning the buttons — the standard, simple way to discard old
+    // closures without tracking references to remove by hand.
+    function freshClone(el) {
+      const clone = el.cloneNode(true);
+      el.replaceWith(clone);
+      return clone;
+    }
+    const newSubmitBtn = freshClone(submitBtn);
+    const newSkipBtn = freshClone(skipBtn);
+    const newCloseBtn = freshClone(closeBtn);
+
+    function finish(result) {
+      closeModal('modal-exportimport-passphrase');
+      resolve(result);
+    }
+
+    newSubmitBtn.addEventListener('click', () => {
+      const val = inputEl.value;
+      if (!val) { errorEl.textContent = 'Enter a passphrase, or use Skip this one.'; return; }
+      finish({ passphrase: val, useForAll: allowUseForAll && useForAllCheckbox.checked });
+    });
+    newSkipBtn.addEventListener('click', () => finish({ skipped: true }));
+    newCloseBtn.addEventListener('click', () => finish(null));
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); newSubmitBtn.click(); }
+    });
+
+    openModal('modal-exportimport-passphrase');
+    inputEl.focus();
+  });
+}
+
+// runExport() — the full Export flow:
+//   1. Gather Books/Chapters/Notes/Fragments from NotesStore.
+//   2. Walk the Library tree, building a flat map of zip-path -> .md
+//      content (empty Corpus/Scroll folders are represented by an
+//      explicit trailing-slash key with no content, which fflate.zipSync
+//      accepts as a directory entry).
+//   3. For Ciphers, ONLY if the checkbox is on: run the batch-decrypt
+//      flow (one passphrase tried across all Ciphers in sequence; a
+//      failure gets a ONE-OFF individual prompt with no "use for all"
+//      offered; after a one-off success/skip, resume the ORIGINAL batch
+//      passphrase on whatever Ciphers remain — a one-off passphrase
+//      never becomes the new batch default, per spec). Any Cipher that
+//      never gets a working passphrase is skipped silently from the
+//      zip, counted for the summary.
+//   4. Fragments (including Dust — anything not yet hard-deleted) go
+//      into "Loose Fragments", named "<date>_<content snippet>.md" —
+//      Fragments have no title and no Scroll placement at all.
+//   5. zipSync the whole tree, trigger a browser download.
+async function runExport() {
+  const statusEl = document.getElementById('export-status');
+  const includeCiphers = document.getElementById('export-include-ciphers').checked;
+  const startBtn = document.getElementById('export-start-btn');
+
+  startBtn.disabled = true;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Gathering Library contents…';
+
+  try {
+    const [books, chapters, allNotes, allFragments] = await Promise.all([
+      NotesStore.getAllBooks(),
+      NotesStore.getAllChapters(),
+      NotesStore.getAll(),
+      NotesStore.getAllFragments(),
+    ]);
+
+    // zip entries: { [path]: Uint8Array | null }. null content + a
+    // path ending in '/' is fflate's convention for an explicit empty
+    // directory entry — see fflate docs / zipSync behavior.
+    // zipTree is a TRUE NESTED OBJECT — fflate.zipSync's documented
+    // structure for representing folders: each key is one path
+    // SEGMENT (not a full path), and a value of {} (rather than a
+    // Uint8Array) means "this is a folder," recursively. This was
+    // verified directly against fflate's source (fltn()) after an
+    // earlier flat-path-with-trailing-slash attempt produced doubled
+    // slashes in the output zip (e.g. "Library/Loose Remnants//") —
+    // fflate's flat-key convention always appends its own trailing
+    // slash for any key whose value isn't a typed array, so manually
+    // adding one too was the bug.
+    const zipTree = {};
+    const usedPaths = new Set(); // de-duplicate filenames that would otherwise collide (e.g. two same-titled Remnants in one Scroll) — tracked as full logical paths, even though the tree itself is nested
+
+    // ensureFolder(folderPath) — walks/creates the nested {} chain for
+    // a folder path (segments joined by '/'), returning the innermost
+    // object so callers can either leave it empty (genuinely empty
+    // Corpus/Scroll, per spec) or add file entries into it directly.
+    function ensureFolder(folderPath) {
+      const segments = folderPath.split('/').filter(Boolean);
+      let node = zipTree;
+      for (const seg of segments) {
+        if (!(seg in node) || node[seg] instanceof Uint8Array) node[seg] = {};
+        node = node[seg];
+      }
+      return node;
+    }
+
+    function uniquePath(basePath) {
+      if (!usedPaths.has(basePath)) { usedPaths.add(basePath); return basePath; }
+      const dot = basePath.lastIndexOf('.');
+      const stem = dot === -1 ? basePath : basePath.slice(0, dot);
+      const ext = dot === -1 ? '' : basePath.slice(dot);
+      let i = 2;
+      let candidate;
+      do { candidate = `${stem} (${i})${ext}`; i++; } while (usedPaths.has(candidate));
+      usedPaths.add(candidate);
+      return candidate;
+    }
+
+    function addMarkdownFile(folderPath, filenameNoExt, content) {
+      const fullPath = uniquePath(`${folderPath}/${sanitizeFilenameComponent(filenameNoExt)}.md`);
+      const segments = fullPath.split('/').filter(Boolean);
+      const fileSeg = segments.pop();
+      const folderNode = ensureFolder(segments.join('/'));
+      folderNode[fileSeg] = strToZipBytes(content || '');
+    }
+
+    // Notes split by type up front — Fragments are excluded (getAll()
+    // returns everything sharing the notes store; getAllFragments()
+    // already isolates them, but allNotes here still CONTAINS them
+    // too, so explicitly skip type==='fragment' below to avoid
+    // double-counting/exporting Fragments through the Remnant/Cipher path).
+    const cipherSkipCount = { value: 0 };
+    const ciphersToExport = [];
+    for (const [id, note] of Object.entries(allNotes)) {
+      if (note.type === 'fragment') continue;
+      if (isCipherNote(note)) {
+        if (includeCiphers) ciphersToExport.push({ id, note });
+        else cipherSkipCount.value++;
+      }
+    }
+
+    // ── Cipher batch-decrypt flow ──────────────────────────────────
+    const decryptedCipherContent = {}; // id -> plaintext, only for successfully-decrypted ones
+    if (ciphersToExport.length > 0) {
+      statusEl.textContent = `Decrypting ${ciphersToExport.length} Cipher(s)…`;
+      let batchPassphrase = null;
+      let firstPrompt = true;
+
+      for (const { id, note } of ciphersToExport) {
+        let decrypted = null;
+
+        // Try the existing batch passphrase first, if one is established.
+        // A fresh key MUST be derived per Cipher here, even though the
+        // PASSPHRASE is shared across the batch — each Cipher has its
+        // own independently-random salt (see Cipher.createRecord), so
+        // the derived AES key necessarily differs per Cipher even with
+        // an identical passphrase. Caching a derived key across
+        // different Ciphers was tried and was a real bug (it always
+        // failed except for the Cipher whose salt the cached key
+        // actually matched) — re-deriving is the only correct option,
+        // not merely a skipped optimization.
+        if (batchPassphrase !== null) {
+          try {
+            const key = (await Cipher.verifyAndDeriveKey(batchPassphrase, note.encrypted)).key;
+            decrypted = await Cipher.decryptAllLinesWithKey(key, note.encrypted);
+          } catch (e) {
+            decrypted = null; // wrong passphrase for THIS Cipher specifically — falls through to the one-off prompt below
+          }
+        }
+
+        if (decrypted === null) {
+          // Either no batch passphrase yet (first Cipher), or the
+          // established batch passphrase didn't work for this one —
+          // prompt individually. allowUseForAll=true ONLY on the very
+          // first prompt of the whole batch (establishing the initial
+          // batch passphrase) — every subsequent prompt triggered by a
+          // batch-passphrase MISMATCH is a one-off retry and must NOT
+          // offer "use for all" again, per spec.
+          const allowUseForAll = firstPrompt;
+          firstPrompt = false;
+          const label = note.title || 'Untitled cipher';
+          const result = await promptExportImportPassphrase(label, allowUseForAll);
+
+          if (result && result.passphrase) {
+            try {
+              const key = (await Cipher.verifyAndDeriveKey(result.passphrase, note.encrypted)).key;
+              decrypted = await Cipher.decryptAllLinesWithKey(key, note.encrypted);
+              if (result.useForAll) {
+                batchPassphrase = result.passphrase;
+              }
+              // else: a one-off success does NOT change batchPassphrase
+              // at all — the NEXT Cipher still tries whatever
+              // batchPassphrase already was (possibly still null),
+              // exactly per spec ("resumes the original batch
+              // passphrase on remaining Ciphers").
+            } catch (e) {
+              decrypted = null; // wrong passphrase even on the dedicated retry — treat as skipped, same as an explicit Skip
+            }
+          }
+          // result === null (modal closed) or result.skipped or a
+          // failed one-off attempt all fall through to "skipped" below.
+        }
+
+        if (decrypted !== null) {
+          decryptedCipherContent[id] = decrypted;
+        } else {
+          cipherSkipCount.value++;
+        }
+      }
+    }
+
+    // ── Walk the Library tree ───────────────────────────────────────
+    const looseRemnants = [];
+    const filedByChapter = {}; // chapterId -> [{id, note}]
+    for (const [id, note] of Object.entries(allNotes)) {
+      if (note.type === 'fragment') continue;
+      if (isCipherNote(note) && !(id in decryptedCipherContent)) continue; // not included or never decrypted — fully absent from the tree, not even an empty folder entry
+      if (note.chapterId && chapters[note.chapterId]) {
+        (filedByChapter[note.chapterId] ||= []).push({ id, note });
+      } else {
+        looseRemnants.push({ id, note });
+      }
+    }
+
+    // noteFilenameAndContent(id, note) — single source of truth for
+    // "what filename and content does this Remnant/Cipher export as,"
+    // used identically by the Loose Remnants loop and the Scroll loop
+    // below, so the cipher- prefix / decrypted-content lookup logic
+    // lives in exactly one place.
+    function noteFilenameAndContent(id, note) {
+      const isCipher = isCipherNote(note);
+      const title = note.title || 'Untitled remnant';
+      const filename = isCipher ? `cipher-${title}` : title;
+      const content = isCipher ? decryptedCipherContent[id] : note.content;
+      return { filename, content };
+    }
+
+    // Loose Remnants (and decrypted, unfiled Ciphers) — always an
+    // explicit folder entry even if it ends up empty, per spec parity
+    // with how empty Corpus/Scroll folders are handled below.
+    ensureFolder('Library/Loose Remnants');
+    for (const { id, note } of looseRemnants) {
+      const { filename, content } = noteFilenameAndContent(id, note);
+      addMarkdownFile('Library/Loose Remnants', filename, content);
+    }
+
+    // Corpora (Books) -> Scrolls (Chapters) -> Remnants/Ciphers.
+    // Sorted by `order` to match the nav's own display order, rather
+    // than arbitrary object-key iteration order.
+    const sortedBooks = Object.values(books).sort((a, b) => (a.order || 0) - (b.order || 0));
+    for (const book of sortedBooks) {
+      const corpusFolder = `Library/${sanitizeFilenameComponent(book.name || 'Untitled Corpus')}`;
+      ensureFolder(corpusFolder); // explicit folder entry even if every Scroll inside ends up empty
+
+      const bookChapterIds = (book.chapterIds || []).filter(cid => chapters[cid]);
+      const sortedChapters = bookChapterIds
+        .map(cid => chapters[cid])
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+      for (const chapter of sortedChapters) {
+        const scrollFolder = `${corpusFolder}/${sanitizeFilenameComponent(chapter.name || 'Untitled Scroll')}`;
+        ensureFolder(scrollFolder);
+
+        const notesInChapter = (filedByChapter[chapter.id] || []);
+        for (const { id, note } of notesInChapter) {
+          const { filename, content } = noteFilenameAndContent(id, note);
+          addMarkdownFile(scrollFolder, filename, content);
+        }
+      }
+    }
+
+    // Fragments (including Dust) -> Loose Fragments. No Scroll
+    // placement, no title — filename is date + content snippet, per spec.
+    ensureFolder('Library/Loose Fragments');
+    for (const [id, fragment] of Object.entries(allFragments)) {
+      const dateStr = new Date(fragment.createdAt || Date.now()).toISOString().slice(0, 10);
+      const snippet = (fragment.content || '').trim().slice(0, 40).replace(/\n/g, ' ');
+      const filename = `${dateStr}_${snippet || 'fragment'}`;
+      addMarkdownFile('Library/Loose Fragments', filename, fragment.content);
+    }
+
+    statusEl.textContent = 'Building zip…';
+    const zipBytes = fflate.zipSync(zipTree, { level: 6 });
+    const blob = new Blob([zipBytes], { type: 'application/zip' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Remnant Export ${new Date().toISOString().slice(0, 10)}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+    const summaryParts = [];
+    if (!includeCiphers && cipherSkipCount.value > 0) {
+      summaryParts.push(`${cipherSkipCount.value} Cipher(s) skipped — "Decrypt and include Ciphers" was off`);
+    } else if (cipherSkipCount.value > 0) {
+      summaryParts.push(`${cipherSkipCount.value} Cipher(s) skipped — no working passphrase entered`);
+    }
+    statusEl.style.color = 'var(--ink)';
+    statusEl.textContent = summaryParts.length ? `Export complete. ${summaryParts.join('. ')}.` : 'Export complete.';
+  } catch (e) {
+    console.error('[Export] failed:', e);
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Export failed — see console for details.';
+  } finally {
+    startBtn.disabled = false;
+  }
+}
+
+// strToZipBytes(str) — fflate.zipSync wants Uint8Array content per
+// entry, not raw strings; this is the standard TextEncoder round-trip,
+// correctly handling non-ASCII titles/content (UTF-8), unlike a naive
+// per-character charCode approach which would corrupt anything outside
+// Latin1.
+function strToZipBytes(str) {
+  return new TextEncoder().encode(str);
+}
+
+document.getElementById('export-start-btn')?.addEventListener('click', runExport);
+
+// ── Import ───────────────────────────────────────────────────────────
+//
+// File-picker wiring: the visible "Choose zip file…" button just proxies
+// a click to the hidden <input type="file">, since styling a native
+// file input directly is unreliable across browsers. Once a file is
+// chosen, the filename replaces the button's label and the real
+// "Import" button appears — selecting a file does NOT start the import
+// immediately, matching Export's own "configure options, then press
+// the action button" shape rather than triggering work the instant a
+// file is picked.
+let pendingImportFile = null;
+
+document.getElementById('import-pick-file-btn')?.addEventListener('click', () => {
+  document.getElementById('import-file-input').click();
+});
+
+document.getElementById('import-file-input')?.addEventListener('change', (e) => {
+  const file = e.target.files && e.target.files[0];
+  const pickBtn = document.getElementById('import-pick-file-btn');
+  const startBtn = document.getElementById('import-start-btn');
+  const statusEl = document.getElementById('import-status');
+  if (!file) {
+    pendingImportFile = null;
+    pickBtn.textContent = 'Choose zip file…';
+    startBtn.style.display = 'none';
+    return;
+  }
+  pendingImportFile = file;
+  pickBtn.textContent = file.name;
+  startBtn.style.display = '';
+  statusEl.textContent = '';
+});
+
+// runImport() — reads the chosen zip, walks Library/<Corpus>/<Scroll>/*.md
+// (and the two special Loose folders) per Export's own format, and
+// creates the corresponding Corpora/Scrolls/Remnants/Ciphers/Fragments.
+// Only round-trips Remnant's OWN export shape — a zip from anywhere
+// else (or hand-edited folder names that don't start with "Library/")
+// produces an empty/near-empty import with a summary noting how many
+// entries were skipped, rather than guessing at an unfamiliar structure.
+async function runImport() {
+  const statusEl = document.getElementById('import-status');
+  const startBtn = document.getElementById('import-start-btn');
+  const promptForCipherPassphrase = document.getElementById('import-prompt-cipher-passphrase').checked;
+
+  if (!pendingImportFile) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Choose a zip file first.';
+    return;
+  }
+
+  startBtn.disabled = true;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Reading zip…';
+
+  try {
+    const arrayBuffer = await pendingImportFile.arrayBuffer();
+    const unzipped = fflate.unzipSync(new Uint8Array(arrayBuffer));
+
+    // ── Parse every path into a structured plan BEFORE writing anything ──
+    // Two passes (parse, then write) rather than writing as paths are
+    // encountered — a Corpus must exist before its Scrolls are created,
+    // and a Scroll before its Remnants, so the natural fix is: collect
+    // the full set of Corpus/Scroll names needed (from EVERY path, file
+    // or folder-only), create those first, then create content into them.
+    const corpusNames = new Set(); // top-level folder names under Library/, excluding the two Loose folders
+    const scrollNamesByCorpus = {}; // corpusName -> Set of scroll names
+    const filesByLocation = []; // { corpusName|null, scrollName|null, isLoose: 'remnants'|'fragments'|null, filenameNoExt, content }
+    let skippedCount = 0;
+
+    for (const path of Object.keys(unzipped)) {
+      if (path.endsWith('/')) continue; // directory-only entry — its existence is implied by corpusNames/scrollNamesByCorpus below, nothing further to do with it directly
+      if (!path.startsWith('Library/')) { skippedCount++; continue; }
+      if (!path.endsWith('.md')) { skippedCount++; continue; }
+
+      const relative = path.slice('Library/'.length); // e.g. "Work Notes/Meetings/Notes for Mark.md" or "Loose Remnants/Loose Idea.md"
+      const segments = relative.split('/');
+      const filenameNoExt = segments[segments.length - 1].replace(/\.md$/, '');
+      const content = new TextDecoder().decode(unzipped[path]);
+
+      if (segments.length === 2 && segments[0] === 'Loose Remnants') {
+        filesByLocation.push({ corpusName: null, scrollName: null, isLoose: 'remnants', filenameNoExt, content });
+      } else if (segments.length === 2 && segments[0] === 'Loose Fragments') {
+        filesByLocation.push({ corpusName: null, scrollName: null, isLoose: 'fragments', filenameNoExt, content });
+      } else if (segments.length === 3) {
+        const [corpusName, scrollName] = segments;
+        corpusNames.add(corpusName);
+        (scrollNamesByCorpus[corpusName] ||= new Set()).add(scrollName);
+        filesByLocation.push({ corpusName, scrollName, isLoose: null, filenameNoExt, content });
+      } else {
+        // Doesn't match any recognized shape (e.g. a file directly
+        // under Library/ with no folder, or nested deeper than 3
+        // levels) — not something Export ever produces.
+        skippedCount++;
+      }
+    }
+
+    // Folder-only entries (genuinely empty Corpus/Scroll, per Export's
+    // own round-trip fidelity guarantee) still need to register their
+    // names even though no file triggers the logic above.
+    for (const path of Object.keys(unzipped)) {
+      if (!path.endsWith('/')) continue;
+      if (!path.startsWith('Library/')) continue;
+      const relative = path.slice('Library/'.length, -1); // strip "Library/" prefix and trailing "/"
+      if (!relative) continue; // the "Library/" entry itself
+      const segments = relative.split('/');
+      if (segments[0] === 'Loose Remnants' || segments[0] === 'Loose Fragments') continue; // these always exist implicitly, no Corpus/Scroll registration needed
+      if (segments.length === 1) corpusNames.add(segments[0]);
+      else if (segments.length === 2) {
+        corpusNames.add(segments[0]);
+        (scrollNamesByCorpus[segments[0]] ||= new Set()).add(segments[1]);
+      }
+    }
+
+    // ── Create Corpora and Scrolls ──────────────────────────────────
+    statusEl.textContent = 'Creating Corpora and Scrolls…';
+    const bookIdByName = {};
+    const chapterIdByCorpusAndScroll = {}; // `${corpusName}\u0000${scrollName}` -> chapterId
+
+    let bookOrder = 0;
+    for (const corpusName of corpusNames) {
+      const bookId = generateId('b');
+      await NotesStore.setBook(bookId, {
+        id: bookId, name: corpusName, description: '', chapterIds: [],
+        order: bookOrder++, createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      bookIdByName[corpusName] = bookId;
+
+      let chapterOrder = 0;
+      const scrollNames = scrollNamesByCorpus[corpusName] || new Set();
+      const chapterIds = [];
+      for (const scrollName of scrollNames) {
+        const chapterId = generateId('c');
+        await NotesStore.setChapter(chapterId, {
+          id: chapterId, bookId, name: scrollName, description: '', noteIds: [],
+          order: chapterOrder++, createdAt: Date.now(), updatedAt: Date.now(),
+        });
+        chapterIds.push(chapterId);
+        chapterIdByCorpusAndScroll[`${corpusName}\u0000${scrollName}`] = chapterId;
+      }
+      const book = await NotesStore.getBook(bookId);
+      book.chapterIds = chapterIds;
+      await NotesStore.setBook(bookId, book);
+    }
+
+    // ── Create Remnants/Ciphers/Fragments ───────────────────────────
+    let cipherImportedAsCipherCount = 0;
+    let cipherImportedAsRemnantCount = 0;
+    let remnantCount = 0;
+    let fragmentCount = 0;
+    let firstCipherPrompt = true;
+    let batchPassphrase = null; // mirrors Export's own batch/one-off/resume shape, applied here to IMPORT's per-Cipher passphrase prompts
+
+    statusEl.textContent = `Importing ${filesByLocation.length} item(s)…`;
+
+    for (const item of filesByLocation) {
+      if (item.isLoose === 'fragments') {
+        await NotesStore.createFragment(item.content);
+        fragmentCount++;
+        continue;
+      }
+
+      const chapterId = item.isLoose === 'remnants'
+        ? null
+        : chapterIdByCorpusAndScroll[`${item.corpusName}\u0000${item.scrollName}`] ?? null;
+
+      const isCipherFile = item.filenameNoExt.startsWith('cipher-');
+      const titleWithoutPrefix = isCipherFile ? item.filenameNoExt.slice('cipher-'.length) : item.filenameNoExt;
+
+      if (isCipherFile && promptForCipherPassphrase) {
+        let passphrase = batchPassphrase;
+        let useThisAsNewBatch = false;
+
+        if (passphrase === null) {
+          const allowUseForAll = firstCipherPrompt;
+          firstCipherPrompt = false;
+          const result = await promptExportImportPassphrase(titleWithoutPrefix, allowUseForAll);
+          if (result && result.passphrase) {
+            passphrase = result.passphrase;
+            useThisAsNewBatch = result.useForAll;
+          }
+        }
+
+        if (passphrase !== null) {
+          const id = generateId('n');
+          const record = await Cipher.createRecord(passphrase, item.content);
+          await NotesStore.set(id, {
+            id, chapterId, title: titleWithoutPrefix, type: 'cipher',
+            encrypted: record.record, order: 0, createdAt: Date.now(), updatedAt: Date.now(),
+          });
+          if (useThisAsNewBatch) batchPassphrase = passphrase;
+          cipherImportedAsCipherCount++;
+          continue;
+        }
+        // No passphrase entered (modal closed/skipped) — falls through
+        // to the plain-Remnant path below, per spec: "any passphrase
+        // NOT entered results in that cipher being onboarded as a
+        // remnant with cipher- appended to the name."
+      }
+
+      // Plain Remnant path — either not a cipher- file at all, OR the
+      // checkbox was off, OR no passphrase was ever entered for it.
+      // The filename (WITH its cipher- prefix intact, if present) IS
+      // the title in this path, per spec.
+      const id = generateId('n');
+      await NotesStore.set(id, {
+        id, chapterId, title: item.filenameNoExt, content: item.content,
+        order: 0, createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      if (isCipherFile) cipherImportedAsRemnantCount++;
+      else remnantCount++;
+    }
+
+    // Refresh every in-memory cache from NotesStore and re-render —
+    // Import writes directly to NotesStore throughout (bulk operation,
+    // not the single-item createBook/createChapter/etc. UI flow, which
+    // would re-render after EVERY individual item) rather than
+    // incrementally maintaining App.books/App.chapters/etc. itself.
+    await loadNavData();
+    await loadFragmentData();
+    markDirty();
+    renderNavTree();
+
+    const summaryParts = [];
+    if (cipherImportedAsCipherCount) summaryParts.push(`${cipherImportedAsCipherCount} Cipher(s) restored`);
+    if (cipherImportedAsRemnantCount) summaryParts.push(`${cipherImportedAsRemnantCount} Cipher(s) imported as plain Remnants (no passphrase entered)`);
+    if (remnantCount) summaryParts.push(`${remnantCount} Remnant(s)`);
+    if (fragmentCount) summaryParts.push(`${fragmentCount} Fragment(s)`);
+    if (skippedCount) summaryParts.push(`${skippedCount} unrecognized entr${skippedCount === 1 ? 'y' : 'ies'} skipped`);
+
+    statusEl.style.color = 'var(--ink)';
+    statusEl.textContent = summaryParts.length ? `Import complete: ${summaryParts.join(', ')}.` : 'Import complete — nothing recognized in this zip.';
+  } catch (e) {
+    console.error('[Import] failed:', e);
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Import failed — see console for details.';
+  } finally {
+    startBtn.disabled = false;
+  }
+}
+
+document.getElementById('import-start-btn')?.addEventListener('click', runImport);
 
 function saveSettingsProfileFields() {
   App.data.firstName = document.getElementById('settings-firstname-input').value.trim();
