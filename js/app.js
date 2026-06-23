@@ -606,15 +606,24 @@ function applyRemnantBodyMode(showInscribe) {
   // Plain Remnant or Fragment: show Inscribe button, apply current mode
   btn.style.display = '';
   if (App._remnantEditMode) {
-    // Already in edit mode — ensure preview is off
+    // Edit mode — ensure preview is off
     if (App._easyMDE?.isPreviewActive()) App._easyMDE.togglePreview();
     App._easyMDEWrapperEl?.classList.remove('body-read-mode');
     btn.classList.add('edit-active');
   } else {
-    // Read mode — ensure preview is on
-    if (App._easyMDE && !App._easyMDE.isPreviewActive()) App._easyMDE.togglePreview();
+    // Read mode — ensure preview is on. Defer one rAF so EasyMDE has
+    // finished rendering newly-set content before toggling to preview,
+    // otherwise the preview div can come up blank on first open.
     App._easyMDEWrapperEl?.classList.add('body-read-mode');
     btn.classList.remove('edit-active');
+    if (App._easyMDE && !App._easyMDE.isPreviewActive()) {
+      requestAnimationFrame(() => {
+        // Re-check: user may have clicked Inscribe in the same frame
+        if (!App._remnantEditMode && !App._easyMDE.isPreviewActive()) {
+          App._easyMDE.togglePreview();
+        }
+      });
+    }
   }
 }
 
