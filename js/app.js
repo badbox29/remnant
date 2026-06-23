@@ -107,6 +107,7 @@ const App = {
   // a separate raw-text copy or reaches into its DOM; .value()/
   // .value(str) are the only interface used.
   _easyMDE: null, // the live EasyMDE instance, created once on boot and reused across every note/Fragment/Cipher — see initBodyEditor()
+  _remnantEditMode: false, // true while a plain Remnant is in edit mode (toolbar visible, cursor enabled); false = read mode (default)
 };
 
 // Default data shape (localStorage). Note CONTENT is never stored here —
@@ -386,6 +387,34 @@ function closeModal(id) {
   document.getElementById(id)?.classList.remove('open');
 }
 
+// showConfirm(message, onConfirm) — themed replacement for native confirm().
+// Renders the message in the #modal-confirm overlay, calls onConfirm() if
+// the user clicks OK, does nothing on Cancel. The callback is one-shot:
+// wiring is replaced on every call so stale handlers never fire.
+function showConfirm(message, onConfirm) {
+  const overlay = document.getElementById('modal-confirm');
+  const msgEl   = document.getElementById('confirm-message');
+  const okBtn   = document.getElementById('confirm-ok-btn');
+  const cancelBtn = document.getElementById('confirm-cancel-btn');
+  if (!overlay || !msgEl || !okBtn || !cancelBtn) {
+    // Fallback to native if DOM isn't ready (shouldn't happen post-boot)
+    if (confirm(message)) onConfirm();
+    return;
+  }
+  msgEl.textContent = message;
+  // Replace handlers — cloneNode trick avoids stacking listeners across calls
+  const newOk = okBtn.cloneNode(true);
+  const newCancel = cancelBtn.cloneNode(true);
+  okBtn.replaceWith(newOk);
+  cancelBtn.replaceWith(newCancel);
+  const close = () => closeModal('modal-confirm');
+  newOk.addEventListener('click', () => { close(); onConfirm(); });
+  newCancel.addEventListener('click', close);
+  openModal('modal-confirm');
+  newOk.focus();
+}
+
+
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', e => {
     if (e.target === overlay) overlay.classList.remove('open');
@@ -458,6 +487,25 @@ function initBodyEditor() {
   App._easyMDE.codemirror.on('cursorActivity', () => {
     if (isIlluminated(App.activeNoteId)) resetIlluminateIdleTimer();
   });
+
+  // Quill edit-mode toggle button
+  document.getElementById('remnant-inscribe-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (App._remnantEditMode) {
+      exitRemnantEditMode(true);
+    } else {
+      enterRemnantEditMode();
+    }
+  });
+
+  // Click-outside the body wrap exits edit mode and saves
+  document.addEventListener('click', (e) => {
+    if (!App._remnantEditMode) return;
+    const bodyWrap = document.getElementById('note-body-wrap');
+    if (bodyWrap && !bodyWrap.contains(e.target)) {
+      exitRemnantEditMode(true);
+    }
+  });
 }
 
 function getBodyEl() {
@@ -500,6 +548,88 @@ function setBodyDisabled(disabled) {
 function setBodyPlaceholder(text) {
   if (!App._easyMDE) return;
   App._easyMDE.codemirror.setOption('placeholder', text);
+}
+
+// ── Remnant read/edit mode ──────────────────────────────────────────
+// Read mode = EasyMDE's built-in preview (rendered Markdown HTML, no
+// syntax markers, no cursor). Edit mode = live CodeMirror editor with
+// toolbar. Inscribe button toggles between the two.
+// Ciphers use Illuminate/Obscure instead. Fragments follow same pattern.
+
+function enterRemnantEditMode() {
+  if (App._remnantEditMode) return;
+  App._remnantEditMode = true;
+  // Exit preview mode → back to live CodeMirror editor
+  if (App._easyMDE?.isPreviewActive()) App._easyMDE.togglePreview();
+  App._easyMDEWrapperEl?.classList.remove('body-read-mode');
+  const btn = document.getElementById('remnant-inscribe-btn');
+  btn?.classList.add('edit-active');
+  if (btn) btn.textContent = 'Repose';
+  App._easyMDE?.codemirror.setCursor({line: 0, ch: 0});
+  App._easyMDE?.codemirror.focus();
+}
+
+function exitRemnantEditMode(save) {
+  if (!App._remnantEditMode) return;
+  App._remnantEditMode = false;
+  if (save) scheduleSaveActive();
+  // Enter preview mode → rendered HTML, no cursor
+  if (App._easyMDE && !App._easyMDE.isPreviewActive()) App._easyMDE.togglePreview();
+  App._easyMDEWrapperEl?.classList.add('body-read-mode');
+  const btn = document.getElementById('remnant-inscribe-btn');
+  btn?.classList.remove('edit-active');
+  if (btn) btn.textContent = 'Inscribe';
+}
+
+// enterReadModeForNewNote() — called when rendering a fresh Remnant/Fragment
+// tab. Ensures preview is active without the save that exitRemnantEditMode
+// would trigger (there's nothing to save yet).
+function enterReadModeForNewNote() {
+  App._remnantEditMode = false;
+  if (App._easyMDE && !App._easyMDE.isPreviewActive()) App._easyMDE.togglePreview();
+  App._easyMDEWrapperEl?.classList.add('body-read-mode');
+  const btn = document.getElementById('remnant-inscribe-btn');
+  btn?.classList.remove('edit-active');
+  if (btn) btn.textContent = 'Inscribe';
+}
+
+// Apply read or edit mode chrome for plain Remnants.
+// Called from updateCipherControlsVisibility when note type is determined.
+function applyRemnantBodyMode(showInscribe) {
+  const btn = document.getElementById('remnant-inscribe-btn');
+  if (!btn) return;
+  if (!showInscribe) {
+    // Cipher or empty — hide Inscribe, ensure we're NOT in preview mode
+    // (Ciphers use their own obscured viewer, not EasyMDE preview)
+    btn.style.display = 'none';
+    if (App._easyMDE?.isPreviewActive()) App._easyMDE.togglePreview();
+    App._easyMDEWrapperEl?.classList.remove('body-read-mode');
+    return;
+  }
+  // Plain Remnant or Fragment: show Inscribe button, apply current mode
+  btn.style.display = '';
+  if (App._remnantEditMode) {
+    // Edit mode — ensure preview is off
+    if (App._easyMDE?.isPreviewActive()) App._easyMDE.togglePreview();
+    App._easyMDEWrapperEl?.classList.remove('body-read-mode');
+    btn.classList.add('edit-active');
+    btn.textContent = 'Repose';
+  } else {
+    // Read mode — ensure preview is on. Defer one rAF so EasyMDE has
+    // finished rendering newly-set content before toggling to preview,
+    // otherwise the preview div can come up blank on first open.
+    App._easyMDEWrapperEl?.classList.add('body-read-mode');
+    btn.classList.remove('edit-active');
+    btn.textContent = 'Inscribe';
+    if (App._easyMDE && !App._easyMDE.isPreviewActive()) {
+      requestAnimationFrame(() => {
+        // Re-check: user may have clicked Inscribe in the same frame
+        if (!App._remnantEditMode && !App._easyMDE.isPreviewActive()) {
+          App._easyMDE.togglePreview();
+        }
+      });
+    }
+  }
 }
 
 function generateNoteId() {
@@ -545,6 +675,11 @@ async function openNoteInTab(id) {
 
 function setActiveNote(id) {
   if (App._cipherKeyboardMode && App.activeNoteId !== id) exitCipherKeyboardMode();
+  // Switching to a different note resets read/edit mode to read (default).
+  if (id !== App.activeNoteId && App._remnantEditMode) {
+    exitRemnantEditMode(false); // don't re-save — the departing note already auto-saves on change
+  }
+  App._remnantEditMode = false; // always reset regardless of prior state
   App.activeNoteId = id;
   App._activeIsFragment = false; // setActiveNote is only ever called for Remnants/Ciphers, never Fragments
   // Only a plain Remnant's active-tab id is ever written into App.data —
@@ -769,6 +904,11 @@ async function submitCipherCreate() {
 document.getElementById('cipher-create-confirm-btn')?.addEventListener('click', submitCipherCreate);
 document.getElementById('cipher-create-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-create'));
 document.getElementById('cipher-create-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-create'));
+['cipher-create-passphrase', 'cipher-create-passphrase-confirm'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitCipherCreate(); }
+  });
+});
 
 // openCipherInTab(id) — entry point from clicking a Cipher row in the nav
 // tree, or re-selecting an already-open Cipher tab. If the Cipher is
@@ -891,6 +1031,9 @@ async function submitCipherUnlock() {
 document.getElementById('cipher-unlock-confirm-btn')?.addEventListener('click', submitCipherUnlock);
 document.getElementById('cipher-unlock-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-unlock'));
 document.getElementById('cipher-unlock-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-unlock'));
+document.getElementById('cipher-unlock-passphrase')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitCipherUnlock(); }
+});
 
 // saveActiveCipher() — the Cipher equivalent of saveActiveNote(). Title
 // stays plaintext (matches a Remnant; see notesStore.js header for why).
@@ -1156,6 +1299,9 @@ document.getElementById('cipher-illuminate-btn')?.addEventListener('click', open
 document.getElementById('cipher-illuminate-confirm-btn')?.addEventListener('click', submitCipherIlluminate);
 document.getElementById('cipher-illuminate-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
 document.getElementById('cipher-illuminate-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
+document.getElementById('cipher-illuminate-passphrase')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitCipherIlluminate(); }
+});
 document.getElementById('cipher-obscure-btn')?.addEventListener('click', () => {
   if (App.activeNoteId) obscureCipher(App.activeNoteId);
 });
@@ -1177,9 +1323,9 @@ function updateFragmentControlsVisibility(id) {
 document.getElementById('fragment-promote-btn')?.addEventListener('click', () => {
   const id = App.activeNoteId;
   if (!id || !App._activeIsFragment) return;
-  if (confirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.')) {
+  showConfirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.', () => {
     promoteFragmentToRemnant(id);
-  }
+  });
 });
 
 document.getElementById('fragment-merge-btn')?.addEventListener('click', () => {
@@ -1864,6 +2010,8 @@ async function createFragmentAndOpen() {
 
 function setActiveFragment(id) {
   if (App._cipherKeyboardMode) exitCipherKeyboardMode();
+  if (App._remnantEditMode) exitRemnantEditMode(false);
+  App._remnantEditMode = false;
   App.activeNoteId = id;
   // Fragment active-tab id never touches App.data.tabState — same
   // structural reasoning as Cipher tabs (see setActiveNote).
@@ -2165,9 +2313,9 @@ function buildBookRow(book) {
 
   row.querySelector('[data-action="delete-book"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Delete "${book.name}"? Scrolls and remnants inside will move to Loose Remnants.`)) {
+    showConfirm(`Delete "${book.name}"? Scrolls and remnants inside will move to Loose Remnants.`, () => {
       deleteBook(book.id);
-    }
+    });
   });
 
   row.addEventListener('dblclick', () => startInlineRename('book', book.id));
@@ -2235,9 +2383,9 @@ function buildChapterRow(chapter) {
 
   row.querySelector('[data-action="delete-chapter"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm(`Delete "${chapter.name}"? Remnants inside will move to Loose Remnants.`)) {
+    showConfirm(`Delete "${chapter.name}"? Remnants inside will move to Loose Remnants.`, () => {
       deleteChapter(chapter.id);
-    }
+    });
   });
 
   row.addEventListener('dblclick', () => startInlineRename('chapter', chapter.id));
@@ -2308,9 +2456,9 @@ function buildNoteRow(noteSummary) {
     const warning = isCipher
       ? `Delete "${label}"? This Cipher's encrypted content will be permanently deleted — there is no way to recover it afterward, even with the correct passphrase.`
       : `Delete "${label}"? This cannot be undone.`;
-    if (confirm(warning)) {
+    showConfirm(warning, () => {
       deleteNote(noteSummary.id);
-    }
+    });
   });
 
   attachDragHandlers(row, {
@@ -2472,9 +2620,9 @@ function buildFragmentRow(fragment) {
   });
   row.querySelector('[data-action="delete-fragment"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (confirm('Delete this fragment? This cannot be undone.')) {
+    showConfirm('Delete this fragment? This cannot be undone.', () => {
       deleteFragment(fragment.id);
-    }
+    });
   });
 
   // Right-click → Promote to Remnant. A native browser context menu
@@ -2482,9 +2630,9 @@ function buildFragmentRow(fragment) {
   // needs multiple options) — a single confirm() is enough for one action.
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    if (confirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.')) {
+    showConfirm('Promote this fragment to a Remnant? It will move to Loose Remnants as "Untitled Remnant" and stop decaying.', () => {
       promoteFragmentToRemnant(fragment.id);
-    }
+    });
   });
 
   attachFragmentDragHandlers(row, fragment.id);
@@ -2541,9 +2689,9 @@ function attachFragmentDragHandlers(rowEl, fragmentId) {
 function confirmAndMergeFragments(mergedId, survivorId) {
   const mergedLabel = fragmentPreviewLabel(App.fragmentSummaries[mergedId] || {});
   const survivorLabel = fragmentPreviewLabel(App.fragmentSummaries[survivorId] || {});
-  if (confirm(`Merge "${mergedLabel}" into "${survivorLabel}"? The first fragment will be appended and then deleted. This cannot be undone.`)) {
+  showConfirm(`Merge "${mergedLabel}" into "${survivorLabel}"? The first fragment will be appended and then deleted. This cannot be undone.`, () => {
     mergeFragmentsAndRefresh(mergedId, survivorId);
-  }
+  });
 }
 
 async function mergeFragmentsAndRefresh(mergedId, survivorId) {
@@ -2904,7 +3052,14 @@ function updateCipherControlsVisibility(id) {
   obscureBtn.style.display    = illuminated ? '' : 'none';
   bannerEl.style.display      = illuminated ? '' : 'none';
   editorEl.classList.toggle('illuminated', !!illuminated);
-  document.getElementById('note-title-input').placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
+  // Don't overwrite the Fragment branch's own placeholder/visibility handling
+  if (!App._activeIsFragment) {
+    const titleEl = document.getElementById('note-title-input');
+    titleEl.placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
+    titleEl.style.visibility = '';
+  } else {
+    document.getElementById('note-title-input').style.visibility = 'hidden';
+  }
 
   // Exactly one of {body, viewer} is visible at a time for a Cipher.
   // Illuminated -> body editor (full plaintext, editable). Unlocked-but-
@@ -2914,6 +3069,10 @@ function updateCipherControlsVisibility(id) {
   const showViewer = isCipher && unlocked && !illuminated;
   viewerEl.style.display = showViewer ? '' : 'none';
   bodyEl.style.display   = showViewer ? 'none' : '';
+
+  // Inscribe button: shown for plain Remnants and Fragments (not Ciphers, not empty)
+  const showInscribe = !!id && !isCipher;
+  applyRemnantBodyMode(showInscribe);
 }
 
 function renderActiveNote() {
@@ -2944,6 +3103,10 @@ function showEmptyState() {
 function renderActiveNoteInner() {
   const titleEl = document.getElementById('note-title-input');
   const id      = App.activeNoteId;
+
+  // Reset title visibility unconditionally — Fragment branch hides it via
+  // updateCipherControlsVisibility; all other branches need it visible.
+  titleEl.style.visibility = '';
 
   // Cleared unconditionally here, re-shown ONLY by the two genuine
   // "nothing open at all" branches below via showEmptyState() — every
@@ -2978,6 +3141,7 @@ function renderActiveNoteInner() {
       setBodyText(fragment.content || '');
       App._bodyShowingNoteId = id;
     }
+    updateCipherControlsVisibility(id); // hides Cipher chrome, shows Inscribe button for Fragment
     return;
   }
   updateFragmentControlsVisibility(null); // hide Merge/Promote buttons whenever a non-Fragment tab is active
