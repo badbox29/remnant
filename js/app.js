@@ -3449,6 +3449,7 @@ function autoGrowTitle() {
   titleInputEl.style.height = `${titleInputEl.scrollHeight}px`;
 }
 titleInputEl?.addEventListener('input', autoGrowTitle);
+window.addEventListener('resize', autoGrowTitle);
 
 titleInputEl?.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
