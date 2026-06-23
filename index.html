@@ -662,6 +662,22 @@
   </div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════
+     Confirm modal — replaces all native browser confirm() dialogs.
+     Message and callbacks wired at runtime by showConfirm() in app.js.
+     ════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-message">
+  <div class="modal modal-sm">
+    <div class="modal-body" style="padding-top:1.4rem;">
+      <p class="f13 lh" id="confirm-message" style="margin:0 0 1.25rem 0;"></p>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn btn-primary" id="confirm-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="js/vendor/argon2.umd.min.js"></script>
 <script src="js/vendor/easymde.min.js"></script>
 <script src="js/vendor/fflate.min.js"></script>
