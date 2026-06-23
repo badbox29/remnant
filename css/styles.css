@@ -1036,6 +1036,35 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   box-shadow: 0 12px 40px rgba(43,40,35,.25);
 }
 .modal-sm { max-width: 460px; }
+.modal-confirm-dialog { max-width: 360px; }
+
+/* ── Confirm dialog internals ─────────────────────────────────────── */
+.confirm-message-text {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.confirm-divider {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin: 1rem 0 .9rem;
+  color: var(--brass);
+}
+.confirm-divider::before,
+.confirm-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.confirm-divider span { font-size: .8rem; opacity: .85; }
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: .5rem;
+}
 
 .modal-header {
   display: flex;
