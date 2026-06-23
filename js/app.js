@@ -2989,7 +2989,14 @@ function updateCipherControlsVisibility(id) {
   obscureBtn.style.display    = illuminated ? '' : 'none';
   bannerEl.style.display      = illuminated ? '' : 'none';
   editorEl.classList.toggle('illuminated', !!illuminated);
-  document.getElementById('note-title-input').placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
+  // Don't overwrite the Fragment branch's own placeholder/visibility handling
+  if (!App._activeIsFragment) {
+    const titleEl = document.getElementById('note-title-input');
+    titleEl.placeholder = isCipher ? 'Untitled cipher' : 'Untitled remnant';
+    titleEl.style.visibility = '';
+  } else {
+    document.getElementById('note-title-input').style.visibility = 'hidden';
+  }
 
   // Exactly one of {body, viewer} is visible at a time for a Cipher.
   // Illuminated -> body editor (full plaintext, editable). Unlocked-but-
@@ -3033,6 +3040,10 @@ function showEmptyState() {
 function renderActiveNoteInner() {
   const titleEl = document.getElementById('note-title-input');
   const id      = App.activeNoteId;
+
+  // Reset title visibility unconditionally — Fragment branch hides it via
+  // updateCipherControlsVisibility; all other branches need it visible.
+  titleEl.style.visibility = '';
 
   // Cleared unconditionally here, re-shown ONLY by the two genuine
   // "nothing open at all" branches below via showEmptyState() — every
