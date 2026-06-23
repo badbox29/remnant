@@ -739,6 +739,62 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   display: none;
 }
 
+/* ── EasyMDE preview panel — Remnant read mode ────────────────────────
+   When a Remnant/Fragment is in read mode, EasyMDE's .editor-preview
+   div is shown instead of the CodeMirror editor. Override its default
+   styles (white background, default font) to match Remnant's aesthetic. */
+.EasyMDEContainer .editor-preview {
+  background: var(--paper);
+  border: none;
+  font-family: var(--font-body);
+  font-size: .98rem;
+  line-height: 1.7;
+  color: var(--ink);
+  padding: 0;
+  /* Make it scrollable within the same flex container as the editor */
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+}
+.EasyMDEContainer .editor-preview h1,
+.EasyMDEContainer .editor-preview h2,
+.EasyMDEContainer .editor-preview h3,
+.EasyMDEContainer .editor-preview h4,
+.EasyMDEContainer .editor-preview h5,
+.EasyMDEContainer .editor-preview h6 {
+  font-family: var(--font-display);
+  color: var(--brass-dark);
+  font-weight: 600;
+  margin: 1.2em 0 .4em;
+}
+.EasyMDEContainer .editor-preview p { margin: 0 0 .8em; }
+.EasyMDEContainer .editor-preview strong { color: var(--ink); font-weight: 700; }
+.EasyMDEContainer .editor-preview em { font-style: italic; }
+.EasyMDEContainer .editor-preview a { color: var(--brass-dark); }
+.EasyMDEContainer .editor-preview blockquote {
+  color: var(--muted);
+  border-left: 3px solid var(--border);
+  margin: .8em 0;
+  padding-left: .9em;
+  font-style: italic;
+}
+.EasyMDEContainer .editor-preview code,
+.EasyMDEContainer .editor-preview pre {
+  background: var(--paper-dark);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: .9em;
+}
+.EasyMDEContainer .editor-preview code { padding: .1em .35em; }
+.EasyMDEContainer .editor-preview pre { padding: .7em 1em; overflow-x: auto; }
+.EasyMDEContainer .editor-preview ul,
+.EasyMDEContainer .editor-preview ol { padding-left: 1.4em; margin: 0 0 .8em; }
+.EasyMDEContainer .editor-preview hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+
 /* The original <textarea id="note-body-input"> is what EasyMDE
    progressively enhances on boot (see app.js initBodyEditor) — by the
    time the app is interactive, EasyMDE has already hidden this element
