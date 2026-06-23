@@ -1542,6 +1542,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   /* Title takes its own full-width line; action buttons wrap below it */
   .note-title-row {
     flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .note-title-input {
     flex: 0 0 100%;
@@ -1563,7 +1564,6 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   .fragment-merge-btn,
   .fragment-promote-btn {
     margin-bottom: .35rem;
-    margin-left: auto;
   }
 }
 
