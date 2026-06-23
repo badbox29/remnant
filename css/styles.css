@@ -1556,13 +1556,14 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
     padding: 0;
     margin: 0;
   }
-  /* Buttons on the second line — left-aligned, compact */
+  /* Buttons on the second line — right-aligned, compact */
   .cipher-illuminate-btn,
   .cipher-obscure-btn,
   .remnant-inscribe-btn,
   .fragment-merge-btn,
   .fragment-promote-btn {
     margin-bottom: .35rem;
+    margin-left: auto;
   }
 }
 
