@@ -564,7 +564,7 @@ function enterRemnantEditMode() {
   App._easyMDEWrapperEl?.classList.remove('body-read-mode');
   const btn = document.getElementById('remnant-inscribe-btn');
   btn?.classList.add('edit-active');
-  if (btn) btn.textContent = 'Rest';
+  if (btn) btn.textContent = 'Repose';
   App._easyMDE?.codemirror.setCursor({line: 0, ch: 0});
   App._easyMDE?.codemirror.focus();
 }
@@ -613,7 +613,7 @@ function applyRemnantBodyMode(showInscribe) {
     if (App._easyMDE?.isPreviewActive()) App._easyMDE.togglePreview();
     App._easyMDEWrapperEl?.classList.remove('body-read-mode');
     btn.classList.add('edit-active');
-    btn.textContent = 'Rest';
+    btn.textContent = 'Repose';
   } else {
     // Read mode — ensure preview is on. Defer one rAF so EasyMDE has
     // finished rendering newly-set content before toggling to preview,
