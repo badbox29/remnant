@@ -4526,3 +4526,19 @@ document.addEventListener('click', (e) => {
 }, true); // capture phase — runs before auth.js's bubble-phase listener
 
 document.addEventListener('DOMContentLoaded', boot);
+
+// ── Dark mode ──────────────────────────────────────────────────────
+// Persisted in localStorage under 'remnant_theme'. Applied immediately
+// on script parse (before DOMContentLoaded) via the IIFE below, so
+// there's no flash of light mode on dark-preference page loads.
+(function applyStoredTheme() {
+  if (localStorage.getItem('remnant_theme') === 'dark') {
+    document.documentElement.classList.add('dark');
+  }
+})();
+
+document.getElementById('theme-toggle-btn')?.addEventListener('click', () => {
+  const isDark = document.documentElement.classList.toggle('dark');
+  localStorage.setItem('remnant_theme', isDark ? 'dark' : 'light');
+});
+
