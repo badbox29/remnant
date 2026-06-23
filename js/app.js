@@ -4315,6 +4315,19 @@ function saveSettingsProfileFields() {
 }
 
 document.getElementById('open-settings-btn')?.addEventListener('click', openSettingsModal);
+
+// ── Dark mode toggle ───────────────────────────────────────────────────────
+// Persists preference to localStorage under its own key (separate from the
+// main rmt_appdata blob so it can be read by the early <head> inline script
+// before app.js loads, preventing a flash of wrong theme on hard reload).
+const DARK_MODE_KEY = 'rmt_darkMode';
+(function initTheme() {
+  if (ls.get(DARK_MODE_KEY)) document.documentElement.classList.add('dark');
+})();
+document.getElementById('theme-toggle-btn')?.addEventListener('click', () => {
+  const isDark = document.documentElement.classList.toggle('dark');
+  ls.set(DARK_MODE_KEY, isDark);
+});
 document.getElementById('settings-close-btn')?.addEventListener('click', () => {
   saveSettingsProfileFields();
   closeModal('modal-settings');
