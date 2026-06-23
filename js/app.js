@@ -880,6 +880,11 @@ async function submitCipherCreate() {
 document.getElementById('cipher-create-confirm-btn')?.addEventListener('click', submitCipherCreate);
 document.getElementById('cipher-create-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-create'));
 document.getElementById('cipher-create-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-create'));
+['cipher-create-passphrase', 'cipher-create-passphrase-confirm'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitCipherCreate(); }
+  });
+});
 
 // openCipherInTab(id) — entry point from clicking a Cipher row in the nav
 // tree, or re-selecting an already-open Cipher tab. If the Cipher is
@@ -1002,6 +1007,9 @@ async function submitCipherUnlock() {
 document.getElementById('cipher-unlock-confirm-btn')?.addEventListener('click', submitCipherUnlock);
 document.getElementById('cipher-unlock-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-unlock'));
 document.getElementById('cipher-unlock-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-unlock'));
+document.getElementById('cipher-unlock-passphrase')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitCipherUnlock(); }
+});
 
 // saveActiveCipher() — the Cipher equivalent of saveActiveNote(). Title
 // stays plaintext (matches a Remnant; see notesStore.js header for why).
@@ -1267,6 +1275,9 @@ document.getElementById('cipher-illuminate-btn')?.addEventListener('click', open
 document.getElementById('cipher-illuminate-confirm-btn')?.addEventListener('click', submitCipherIlluminate);
 document.getElementById('cipher-illuminate-cancel-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
 document.getElementById('cipher-illuminate-close-btn')?.addEventListener('click', () => closeModal('modal-cipher-illuminate'));
+document.getElementById('cipher-illuminate-passphrase')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitCipherIlluminate(); }
+});
 document.getElementById('cipher-obscure-btn')?.addEventListener('click', () => {
   if (App.activeNoteId) obscureCipher(App.activeNoteId);
 });
