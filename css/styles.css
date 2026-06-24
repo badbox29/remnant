@@ -173,6 +173,8 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   display: block;
 }
 
+.brand-wordmark { display: flex; align-items: baseline; gap: .35rem; }
+
 .brand {
   font-family: var(--font-display);
   font-weight: 600;
