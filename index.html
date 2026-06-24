@@ -11,6 +11,7 @@
         onload="window.gisReady=true;window.dispatchEvent(new Event('gis-ready'))"></script>
 
 <link rel="stylesheet" href="js/vendor/easymde.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7/css/materialdesignicons.min.css" />
 <link rel="stylesheet" href="css/styles.css" />
 <!-- Apply dark mode before first paint to prevent flash of wrong theme -->
 <script>try{if(JSON.parse(localStorage.getItem('rmt_darkMode')))document.documentElement.classList.add('dark')}catch(e){}</script>
@@ -31,11 +32,11 @@
     <span class="brand-wordmark"><div class="brand">Remnant</div><span class="brand-version">v0.6</span></span>
   </div>
   <div class="topbar-actions">
-    <button class="link-btn" id="terminology-link-btn" title="What do Corpus, Scroll, and Remnant mean?"><span class="btn-label">Terminology</span></button>
-    <button class="btn btn-sm btn-ghost scratchpad-toggle-btn" id="scratchpad-toggle-btn" title="Scratchpad"><span class="btn-label">Scratchpad</span></button>
+    <button class="link-btn" id="terminology-link-btn" title="What do Corpus, Scroll, and Remnant mean?"><i class="mdi mdi-information-variant-circle-outline"></i><span class="btn-label">Terminology</span></button>
+    <button class="btn btn-sm btn-ghost scratchpad-toggle-btn" id="scratchpad-toggle-btn" title="Scratchpad"><i class="mdi mdi-note-edit-outline"></i><span class="btn-label">Scratchpad</span></button>
     <span id="sync-indicator" class="sync-indicator" style="display:none;" title="Unsynced changes">●</span>
     <button class="btn btn-sm btn-outline" id="save-session-btn" style="display:none;">Save Session</button>
-    <button class="btn btn-sm btn-ghost" id="open-settings-btn"><span class="btn-label">Settings</span></button>
+    <button class="btn btn-sm btn-ghost" id="open-settings-btn"><i class="mdi mdi-cog"></i><span class="btn-label">Settings</span></button>
     <button class="btn-icon theme-toggle-btn" id="theme-toggle-btn" title="Toggle dark mode"></button>
   </div>
 </header>
