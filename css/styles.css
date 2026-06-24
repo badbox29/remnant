@@ -1641,3 +1641,49 @@ html.dark .remnant-inscribe-btn.edit-active::before {
 html.dark .nav-icon-library {
   filter: grayscale(1) brightness(1.8) contrast(0.85);
 }
+
+/* ── Mobile topbar — collapse wordmark and text labels ───────────────────── */
+@media (max-width: 640px) {
+  .topbar { padding: .6rem .75rem; }
+
+  /* Hide "Remnant v0.6" wordmark — show just hamburger + icon */
+  .brand-wordmark { display: none; }
+
+  /* Collapse Terminology, Settings, Scratchpad to icon-only */
+  #terminology-link-btn {
+    font-size: 0;
+    padding: .3rem .4rem;
+    text-decoration: none;
+  }
+  #terminology-link-btn::before {
+    content: '?';
+    font-size: 1.1rem;
+    font-weight: 700;
+    font-family: var(--font-body);
+    color: var(--brass);
+  }
+  #terminology-link-btn:hover::before { color: var(--brass-dark); }
+
+  #open-settings-btn {
+    font-size: 0;
+    padding: .3rem .4rem;
+  }
+  #open-settings-btn::before {
+    content: '⚙';
+    font-size: 1.05rem;
+    font-family: var(--font-body);
+    color: var(--muted);
+  }
+  #open-settings-btn:hover::before { color: var(--ink); }
+
+  #scratchpad-toggle-btn {
+    font-size: 0;
+    padding: .3rem .4rem;
+  }
+  #scratchpad-toggle-btn::before {
+    content: '✏';
+    font-size: 1rem;
+    color: var(--muted);
+  }
+  #scratchpad-toggle-btn:hover::before { color: var(--ink); }
+}
