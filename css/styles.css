@@ -1552,8 +1552,8 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
     flex-wrap: wrap;
   }
   .note-title-input {
+    flex: 0 0 100%;
     width: 100%;
-    flex-basis: 100%;
   }
   /* When title is hidden (Fragments), collapse its space so buttons
      sit at the top of the row rather than below an invisible gap */
