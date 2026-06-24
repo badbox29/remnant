@@ -1657,35 +1657,29 @@ html.dark .nav-icon-library {
     padding: .3rem .4rem;
     text-decoration: none;
   }
-  #terminology-link-btn::before {
-    content: '?';
+  #terminology-link-btn .mdi {
     font-size: 1.1rem;
-    font-weight: 700;
-    font-family: var(--font-body);
     color: var(--brass);
   }
-  #terminology-link-btn:hover::before { color: var(--brass-dark); }
+  #terminology-link-btn:hover .mdi { color: var(--brass-dark); }
 
   #open-settings-btn {
     font-size: 0;
     padding: .3rem .4rem;
   }
-  #open-settings-btn::before {
-    content: '⚙\FE0E';
+  #open-settings-btn .mdi {
     font-size: 1.05rem;
-    font-family: var(--font-body);
     color: var(--muted);
   }
-  #open-settings-btn:hover::before { color: var(--ink); }
+  #open-settings-btn:hover .mdi { color: var(--ink); }
 
   #scratchpad-toggle-btn {
     font-size: 0;
     padding: .3rem .4rem;
   }
-  #scratchpad-toggle-btn::before {
-    content: '📝';
+  #scratchpad-toggle-btn .mdi {
     font-size: 1rem;
     color: var(--muted);
   }
-  #scratchpad-toggle-btn:hover::before { color: var(--ink); }
+  #scratchpad-toggle-btn:hover .mdi { color: var(--ink); }
 }
