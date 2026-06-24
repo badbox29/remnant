@@ -4365,9 +4365,8 @@ document.getElementById('settings-upgrade-google-btn')?.addEventListener('click'
 
 document.getElementById('settings-account-btn')?.addEventListener('click', () => {
   closeModal('modal-settings');
-  if (Auth.isGuest())             Auth.showSetupFresh();
-  else if (Auth.isTokenAccount()) Auth.showGoogleUpgradeFlow();
-  else                             Auth.showGuestSwitchConfirm();
+  if (Auth.isGuest()) Auth.showGuestSwitchConfirm();
+  else                Auth.showAccountSetup();
 });
 
 // ─── Auth callbacks ─────────────────────────────────────────────────
