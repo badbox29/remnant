@@ -1669,7 +1669,7 @@ html.dark .nav-icon-library {
     padding: .3rem .4rem;
   }
   #open-settings-btn::before {
-    content: '⚙';
+    content: '⚙\FE0E';
     font-size: 1.05rem;
     font-family: var(--font-body);
     color: var(--muted);
@@ -1681,7 +1681,7 @@ html.dark .nav-icon-library {
     padding: .3rem .4rem;
   }
   #scratchpad-toggle-btn::before {
-    content: '✏';
+    content: '📝';
     font-size: 1rem;
     color: var(--muted);
   }
