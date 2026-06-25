@@ -2341,7 +2341,7 @@ function buildBookRow(book) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <img class="nav-row-icon" src="${NAV_ICON_CORPUS}" alt="" />
     <span class="nav-row-label"></span>
-    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+ Scroll</span>
+    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+</span>
     <span class="nav-row-actions">
       <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">🗑</span>
     </span>
