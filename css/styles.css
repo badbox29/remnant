@@ -240,6 +240,9 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .btn-ghost { color: var(--muted); }
 .btn-ghost:hover { background: var(--paper-dark); color: var(--ink); }
 
+#nav-new-book-btn { color: var(--gold-vivid); opacity: .6; transition: opacity .15s; }
+#nav-new-book-btn:hover { background: transparent; opacity: 1; }
+
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── Main layout ─────────────────────────────────────────────────── */
@@ -548,12 +551,15 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .nav-row:hover .nav-row-actions { display: flex; }
 .nav-row-action-btn {
-  font-size: .75rem;
+  font-size: .8rem;
+  font-style: normal;
   color: var(--muted);
-  padding: .1rem .3rem;
+  padding: .1rem .25rem;
   border-radius: var(--r-sm);
+  line-height: 1;
+  transition: color .12s, background .12s;
 }
-.nav-row-action-btn:hover { color: var(--red); background: var(--border); }
+.nav-row-action-btn:hover { color: var(--oxide); background: transparent; }
 
 /* Drag-and-drop visual feedback */
 .nav-row[draggable="true"] { cursor: grab; }
