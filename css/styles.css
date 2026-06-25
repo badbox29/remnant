@@ -408,6 +408,16 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .nav-row-book    { padding-left: .75rem; font-weight: 600; }
 .nav-row-chapter { padding-left: 1.85rem; }
 .nav-row-note    { padding-left: 2.95rem; }
+.nav-unfiled-wrap {
+  margin-top: .5rem;
+  border-top: 1px solid rgba(var(--shadow-ink), .12);
+  padding-top: .25rem;
+}
+
+html.dark .nav-unfiled-wrap {
+  border-top-color: rgba(255,255,255, .07);
+}
+
 .nav-row-unfiled-header { padding-left: .75rem; font-weight: 600; color: var(--muted); margin-top: .5rem; }
 
 /* Loose Remnants / Loose Fragments rows reuse .nav-row-note for its row
