@@ -2341,10 +2341,10 @@ function buildBookRow(book) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <img class="nav-row-icon" src="${NAV_ICON_CORPUS}" alt="" />
     <span class="nav-row-label"></span>
-    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+</span>
     <span class="nav-row-actions">
       <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">🗑</span>
     </span>
+    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+</span>
   `;
 
   if (App._pendingRename?.kind === 'book' && App._pendingRename.id === book.id) {
@@ -2409,10 +2409,10 @@ function buildChapterRow(chapter) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <img class="nav-row-icon" src="${NAV_ICON_SCROLL}" alt="" />
     <span class="nav-row-label"></span>
-    <span class="nav-row-inline-add" data-action="add-item" title="New item">+</span>
     <span class="nav-row-actions">
       <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete scroll">🗑</span>
     </span>
+    <span class="nav-row-inline-add" data-action="add-item" title="New item">+</span>
   `;
 
   if (App._pendingRename?.kind === 'chapter' && App._pendingRename.id === chapter.id) {
