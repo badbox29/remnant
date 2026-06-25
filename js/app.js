@@ -2342,9 +2342,9 @@ function buildBookRow(book) {
     <img class="nav-row-icon" src="${NAV_ICON_CORPUS}" alt="" />
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">×</span>
     </span>
-    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+</span>
+    <span class="nav-row-inline-add" data-action="add-scroll" title="Create...">+</span>
   `;
 
   if (App._pendingRename?.kind === 'book' && App._pendingRename.id === book.id) {
@@ -2410,9 +2410,9 @@ function buildChapterRow(chapter) {
     <img class="nav-row-icon" src="${NAV_ICON_SCROLL}" alt="" />
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete scroll">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete scroll">×</span>
     </span>
-    <span class="nav-row-inline-add" data-action="add-item" title="New item">+</span>
+    <span class="nav-row-inline-add" data-action="add-item" title="Create...">+</span>
   `;
 
   if (App._pendingRename?.kind === 'chapter' && App._pendingRename.id === chapter.id) {
@@ -2478,7 +2478,7 @@ function buildNoteRow(noteSummary) {
     <img class="nav-row-icon" src="${isCipher ? NAV_ICON_CIPHER : NAV_ICON_REMNANT}" alt="" />
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-note" title="${isCipher ? 'Delete cipher' : 'Delete remnant'}">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-note" title="${isCipher ? 'Delete cipher' : 'Delete remnant'}">×</span>
     </span>
   `;
   row.querySelector('.nav-row-label').textContent = noteSummary.title?.trim() || (isCipher ? 'Untitled Cipher' : 'Untitled Remnant');
@@ -2513,7 +2513,7 @@ function buildUnfiledSection() {
 
   const header = document.createElement('div');
   header.className = 'nav-row nav-row-unfiled-header';
-  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_REMNANTS}" alt="" /><span class="nav-row-label">Loose Remnants</span><span class="nav-row-inline-add" data-action="add-remnant" title="New Remnant">+</span>`;
+  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_REMNANTS}" alt="" /><span class="nav-row-label">Loose Remnants</span><span class="nav-row-inline-add" data-action="add-remnant" title="Create...">+</span>`;
   header.querySelector('[data-action="add-remnant"]').addEventListener('click', (e) => {
     e.stopPropagation();
     createNote();
@@ -2592,7 +2592,7 @@ function buildFragmentsSection() {
 
   const header = document.createElement('div');
   header.className = 'nav-row nav-row-unfiled-header';
-  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_FRAGMENTS}" alt="" /><span class="nav-row-label">Loose Fragments</span><span class="nav-row-inline-add" data-action="add-fragment" title="New Fragment">+</span>`;
+  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_FRAGMENTS}" alt="" /><span class="nav-row-label">Loose Fragments</span><span class="nav-row-inline-add" data-action="add-fragment" title="Create...">+</span>`;
   header.querySelector('[data-action="add-fragment"]').addEventListener('click', (e) => {
     e.stopPropagation();
     createFragmentAndOpen();
@@ -2639,7 +2639,7 @@ function buildFragmentRow(fragment) {
     <img class="nav-row-icon" src="${icon}" alt="" />
     <span class="nav-row-label"></span>
     <span class="nav-row-actions">
-      <span class="nav-row-action-btn" data-action="delete-fragment" title="Delete fragment">🗑</span>
+      <span class="nav-row-action-btn" data-action="delete-fragment" title="Delete fragment">×</span>
     </span>
   `;
   row.querySelector('.nav-row-label').textContent = fragmentPreviewLabel(fragment);
