@@ -2262,6 +2262,54 @@ function sortByOrder(arr) {
   return [...arr].sort((a, b) => (a.order || 0) - (b.order || 0));
 }
 
+// showNavAddMenu — position-aware context menu for the scroll-level "+" button.
+// Opens below the trigger by default; flips above if near the panel bottom.
+function showNavAddMenu(triggerEl, chapterId) {
+  // Remove any existing menu
+  document.getElementById('nav-add-menu')?.remove();
+
+  const menu = document.createElement('div');
+  menu.id = 'nav-add-menu';
+  menu.className = 'nav-add-menu';
+  menu.innerHTML = `
+    <div class="nav-add-menu-item" data-choice="remnant">+ Remnant</div>
+    <div class="nav-add-menu-item nav-add-menu-item-cipher" data-choice="cipher">+ Cipher</div>
+  `;
+
+  document.body.appendChild(menu);
+
+  // Position: below trigger by default, flip if near bottom
+  const trigRect = triggerEl.getBoundingClientRect();
+  const menuH = menu.offsetHeight || 70; // approx before paint
+  const spaceBelow = window.innerHeight - trigRect.bottom;
+  const above = spaceBelow < menuH + 8;
+
+  menu.style.left = trigRect.left + 'px';
+  if (above) {
+    menu.style.top = (trigRect.top - menuH - 4) + 'px';
+  } else {
+    menu.style.top = (trigRect.bottom + 4) + 'px';
+  }
+
+  menu.querySelector('[data-choice="remnant"]').addEventListener('click', () => {
+    menu.remove();
+    createNote(chapterId);
+  });
+  menu.querySelector('[data-choice="cipher"]').addEventListener('click', () => {
+    menu.remove();
+    openCipherCreateModal(chapterId);
+  });
+
+  // Dismiss on outside click
+  const dismiss = (e) => {
+    if (!menu.contains(e.target)) {
+      menu.remove();
+      document.removeEventListener('mousedown', dismiss, true);
+    }
+  };
+  document.addEventListener('mousedown', dismiss, true);
+}
+
 function renderNavTree() {
   const treeEl = document.getElementById('nav-tree');
   treeEl.innerHTML = '';
@@ -2293,6 +2341,7 @@ function buildBookRow(book) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <img class="nav-row-icon" src="${NAV_ICON_CORPUS}" alt="" />
     <span class="nav-row-label"></span>
+    <span class="nav-row-inline-add" data-action="add-scroll" title="New Scroll">+ Scroll</span>
     <span class="nav-row-actions">
       <span class="nav-row-action-btn" data-action="delete-book" title="Delete corpus">🗑</span>
     </span>
@@ -2311,6 +2360,13 @@ function buildBookRow(book) {
     renderNavTree();
   });
 
+  row.querySelector('[data-action="add-scroll"]')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!isBookExpanded(book.id)) setBookExpanded(book.id, true);
+    const id = await createChapter(book.id, 'Untitled Scroll');
+    if (id) startInlineRename('chapter', id);
+  });
+
   row.querySelector('[data-action="delete-book"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     showConfirm(`Delete "${book.name}"? Scrolls and remnants inside will move to Loose Remnants.`, () => {
@@ -2327,16 +2383,6 @@ function buildBookRow(book) {
   if (expanded) {
     const childWrap = document.createElement('div');
     childWrap.className = 'nav-book-children';
-
-    // Pinned "+ New Scroll" row — always first, before any real scroll.
-    const addRow = document.createElement('div');
-    addRow.className = 'nav-row nav-row-chapter nav-row-add';
-    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Scroll</span>`;
-    addRow.addEventListener('click', async () => {
-      const id = await createChapter(book.id, 'Untitled Scroll');
-      if (id) startInlineRename('chapter', id);
-    });
-    childWrap.appendChild(addRow);
 
     const chapters = sortByOrder(Object.values(App.chapters).filter(c => c.bookId === book.id));
     chapters.forEach(chapter => childWrap.appendChild(buildChapterRow(chapter)));
@@ -2363,6 +2409,7 @@ function buildChapterRow(chapter) {
     <span class="nav-row-caret${expanded ? ' expanded' : ''}">▸</span>
     <img class="nav-row-icon" src="${NAV_ICON_SCROLL}" alt="" />
     <span class="nav-row-label"></span>
+    <span class="nav-row-inline-add" data-action="add-item" title="New item">+</span>
     <span class="nav-row-actions">
       <span class="nav-row-action-btn" data-action="delete-chapter" title="Delete scroll">🗑</span>
     </span>
@@ -2381,6 +2428,11 @@ function buildChapterRow(chapter) {
     renderNavTree();
   });
 
+  row.querySelector('[data-action="add-item"]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showNavAddMenu(e.currentTarget, chapter.id);
+  });
+
   row.querySelector('[data-action="delete-chapter"]')?.addEventListener('click', (e) => {
     e.stopPropagation();
     showConfirm(`Delete "${chapter.name}"? Remnants inside will move to Loose Remnants.`, () => {
@@ -2397,20 +2449,6 @@ function buildChapterRow(chapter) {
   if (expanded) {
     const childWrap = document.createElement('div');
     childWrap.className = 'nav-chapter-children';
-
-    // Pinned "+ New Remnant" row — always first under an expanded scroll.
-    const addRow = document.createElement('div');
-    addRow.className = 'nav-row nav-row-note nav-row-add';
-    addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Remnant</span>`;
-    addRow.addEventListener('click', () => createNote(chapter.id));
-    childWrap.appendChild(addRow);
-
-    // Pinned "+ New Cipher" row — second, right after New Remnant.
-    const addCipherRow = document.createElement('div');
-    addCipherRow.className = 'nav-row nav-row-note nav-row-add';
-    addCipherRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Cipher</span>`;
-    addCipherRow.addEventListener('click', () => openCipherCreateModal(chapter.id));
-    childWrap.appendChild(addCipherRow);
 
     const notes = sortByOrder(Object.values(App.noteSummaries).filter(n => n.chapterId === chapter.id));
     if (!notes.length) {
@@ -2475,21 +2513,15 @@ function buildUnfiledSection() {
 
   const header = document.createElement('div');
   header.className = 'nav-row nav-row-unfiled-header';
-  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_REMNANTS}" alt="" /><span class="nav-row-label">Loose Remnants</span>`;
+  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_REMNANTS}" alt="" /><span class="nav-row-label">Loose Remnants</span><span class="nav-row-inline-add" data-action="add-remnant" title="New Remnant">+</span>`;
+  header.querySelector('[data-action="add-remnant"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    createNote();
+  });
   wrap.appendChild(header);
 
   const childWrap = document.createElement('div');
   childWrap.className = 'nav-unfiled-children';
-
-  // Pinned "+ New Remnant" row — same rationale as Loose Fragments'
-  // "+ New Fragment": always present, not dependent on hovering/selecting
-  // anything, so starting something new from this section never requires
-  // going through the tab bar's "+" menu.
-  const addRow = document.createElement('div');
-  addRow.className = 'nav-row nav-row-note nav-row-add';
-  addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Remnant</span>`;
-  addRow.addEventListener('click', () => createNote());
-  childWrap.appendChild(addRow);
 
   const notes = sortByOrder(Object.values(App.noteSummaries).filter(n => !n.chapterId));
   if (!notes.length) {
@@ -2560,18 +2592,15 @@ function buildFragmentsSection() {
 
   const header = document.createElement('div');
   header.className = 'nav-row nav-row-unfiled-header';
-  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_FRAGMENTS}" alt="" /><span class="nav-row-label">Loose Fragments</span>`;
+  header.innerHTML = `<img class="nav-row-icon nav-row-heading-icon" src="${NAV_ICON_LOOSE_FRAGMENTS}" alt="" /><span class="nav-row-label">Loose Fragments</span><span class="nav-row-inline-add" data-action="add-fragment" title="New Fragment">+</span>`;
+  header.querySelector('[data-action="add-fragment"]').addEventListener('click', (e) => {
+    e.stopPropagation();
+    createFragmentAndOpen();
+  });
   wrap.appendChild(header);
 
   const childWrap = document.createElement('div');
   childWrap.className = 'nav-unfiled-children';
-
-  // Pinned "+ New Fragment" row, same pinning rationale as "+ New Remnant".
-  const addRow = document.createElement('div');
-  addRow.className = 'nav-row nav-row-note nav-row-add';
-  addRow.innerHTML = `<span class="nav-row-caret placeholder">·</span><span class="nav-row-label">+ New Fragment</span>`;
-  addRow.addEventListener('click', () => createFragmentAndOpen());
-  childWrap.appendChild(addRow);
 
   const fragments = Object.values(App.fragmentSummaries)
     .filter(f => f.status !== 'dust')
