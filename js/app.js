@@ -3509,7 +3509,7 @@ function syncObscuredViewerToPointer(id, clientY) {
 
   // Always update mist position — even if active rows haven't changed
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
-  _mistPy = Math.max(0, Math.min(rect.height, clientY - rect.top));
+  _mistPy = clientY - rect.top;
 
   // Clamp clientY to viewer bounds for row detection
   const clampedClientY = Math.max(rect.top, Math.min(rect.bottom, clientY));
