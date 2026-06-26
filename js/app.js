@@ -3714,11 +3714,11 @@ function attachCipherObscuredViewerTracking() {
   const bodyWrap = viewerEl.parentElement;
   if (bodyWrap) {
     bodyWrap.addEventListener('wheel', (e) => {
-      if (viewerEl.style.display === 'none') return;
+      if (viewerEl.style.display === 'none') return; // not in obscured cipher mode
       e.preventDefault();
       let delta = e.deltaY;
-      if (e.deltaMode === 1) delta *= 24; // line mode → pixels
-      if (e.deltaMode === 2) delta *= viewerEl.clientHeight; // page mode
+      if (e.deltaMode === 1) delta *= 24;
+      if (e.deltaMode === 2) delta *= viewerEl.clientHeight;
       viewerEl.scrollTop += delta;
     }, { passive: false });
     new ResizeObserver(() => _mistResizeCanvas()).observe(bodyWrap);
