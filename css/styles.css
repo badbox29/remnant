@@ -1079,8 +1079,7 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   line-height: 1.7;
   color: var(--ink);
   touch-action: pan-y;
-  padding-top: 4em;    /* finger clearance so first row isn't at the very top edge */
-  padding-bottom: 4em; /* finger clearance so last row isn't at the very bottom edge */
+  padding-bottom: 1.5em;
   cursor: none;
 }
 
@@ -1124,7 +1123,10 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
    so mouse events fall through to the viewer normally. */
 .cipher-touch-layer {
   position: absolute;
-  inset: 0;
+  top: -80px;
+  bottom: -80px;
+  left: 0;
+  right: 0;
   z-index: 11;
   pointer-events: none;
   touch-action: none;
