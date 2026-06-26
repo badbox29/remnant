@@ -3453,6 +3453,7 @@ function renderCipherObscuredViewer(id) {
       const row = document.createElement('div');
       row.className = 'cipher-obscured-row';
       row.dataset.lineIndex = i;
+      row.style.cssText = 'position:relative; min-height:1.7em;';
       // Sharp text element
       const realEl = document.createElement('div');
       realEl.className = 'cipher-obscured-row-real';
