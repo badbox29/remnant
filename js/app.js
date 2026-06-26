@@ -3444,6 +3444,29 @@ function _mistResizeCanvas() {
   canvas.height       = h;
   canvas.style.width  = w + 'px';
   canvas.style.height = h + 'px';
+
+  // DEBUG OVERLAY — remove before ship
+  let dbg = document.getElementById('_mist_debug');
+  if (!dbg) {
+    dbg = document.createElement('div');
+    dbg.id = '_mist_debug';
+    dbg.style.cssText = 'position:fixed;top:60px;left:4px;z-index:99999;background:rgba(0,0,0,0.85);color:#ff0;font:11px monospace;padding:6px 8px;border-radius:6px;pointer-events:none;white-space:pre;';
+    document.body.appendChild(dbg);
+  }
+  const wr = wrap.getBoundingClientRect();
+  const vr = viewerEl.getBoundingClientRect();
+  const cr = canvas.getBoundingClientRect();
+  const tl = document.getElementById('cipher-touch-layer');
+  const tr = tl ? tl.getBoundingClientRect() : {};
+  dbg.textContent = [
+    `wrap:   ${Math.round(wr.left)},${Math.round(wr.top)} ${Math.round(wr.width)}x${Math.round(wr.height)}`,
+    `viewer: ${Math.round(vr.left)},${Math.round(vr.top)} ${Math.round(vr.width)}x${Math.round(vr.height)}`,
+    `canvas: ${Math.round(cr.left)},${Math.round(cr.top)} ${Math.round(cr.width)}x${Math.round(cr.height)}`,
+    `touch:  ${Math.round(tr.left)},${Math.round(tr.top)} ${Math.round(tr.width)}x${Math.round(tr.height)}`,
+    `buf:    ${canvas.width}x${canvas.height}`,
+    `win:    ${window.innerWidth}x${window.innerHeight}`,
+    `vvp:    ${Math.round(window.visualViewport?.width)}x${Math.round(window.visualViewport?.height)}`,
+  ].join('\n');
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
