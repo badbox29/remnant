@@ -3434,7 +3434,6 @@ function _mistDraw() {
 
 function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
-  const touchLayer = document.getElementById('cipher-touch-layer');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   if (!viewerEl) return;
   const w = viewerEl.clientWidth;
@@ -3446,12 +3445,6 @@ function _mistResizeCanvas() {
     canvas.height = h;
     canvas.style.top  = t + 'px';
     canvas.style.left = l + 'px';
-  }
-  if (touchLayer) {
-    touchLayer.style.width  = w + 'px';
-    touchLayer.style.height = h + 'px';
-    touchLayer.style.top    = t + 'px';
-    touchLayer.style.left   = l + 'px';
   }
 }
 
