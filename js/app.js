@@ -3438,10 +3438,12 @@ function _mistResizeCanvas() {
   if (!canvas || !viewerEl) return;
   const wrap = viewerEl.parentElement;
   if (!wrap) return;
-  // Size canvas to the parent container (note-body-wrap), not the viewer.
-  // The viewer's clientHeight may not reflect the full visual area on mobile.
-  canvas.width  = wrap.clientWidth;
-  canvas.height = wrap.clientHeight;
+  const w = wrap.offsetWidth;
+  const h = wrap.offsetHeight;
+  canvas.width        = w;
+  canvas.height       = h;
+  canvas.style.width  = w + 'px';
+  canvas.style.height = h + 'px';
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3722,6 +3724,11 @@ function attachCipherObscuredViewerTracking() {
       viewerEl.scrollTop += delta;
     }, { passive: false });
     new ResizeObserver(() => _mistResizeCanvas()).observe(bodyWrap);
+    // On mobile, browser chrome (address bar) appearing/disappearing changes
+    // the visual viewport height — ResizeObserver on bodyWrap may not catch this.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => _mistResizeCanvas());
+    }
   }
 }
 
