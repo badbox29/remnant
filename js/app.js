@@ -3748,7 +3748,7 @@ function attachCipherObscuredViewerTracking() {
 // because on touch, "drag to scroll" and "drag to reveal" are the same
 // physical gesture and were fighting each other; this turns them into
 // one continuous motion instead of two competing ones.
-const EDGE_ZONE_FRACTION = 0.18; // top/bottom 18% of the viewer's height
+const EDGE_ZONE_FRACTION = 0.25; // top/bottom 25% of the viewer's height — larger for mobile reachability
 const EDGE_SCROLL_MAX_PX_PER_FRAME = 14;
 
 let edgeScrollDirection = 0; // -1 up, 0 none, 1 down
@@ -3782,6 +3782,9 @@ function updateTouchEdgeAutoScroll(viewerEl, touchClientY) {
   if (edgeScrollDirection !== 0 && !edgeScrollRAF) {
     const step = () => {
       if (edgeScrollDirection === 0) { edgeScrollRAF = null; return; }
+      // Force layout read before write so browser registers any scrollHeight
+      // changes from newly-expanded decrypted rows before we set scrollTop
+      void viewerEl.scrollHeight;
       viewerEl.scrollTop += edgeScrollDirection * edgeScrollSpeed;
       edgeScrollRAF = requestAnimationFrame(step);
     };
