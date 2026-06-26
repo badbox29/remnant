@@ -3434,11 +3434,12 @@ function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   if (!canvas || !viewerEl) return;
-  const rect = viewerEl.getBoundingClientRect();
-  canvas.style.left   = rect.left + 'px';
-  canvas.style.top    = rect.top + 'px';
-  canvas.width        = rect.width;
-  canvas.height       = rect.height;
+  // Size canvas to the visible viewport of the viewer, not its scroll height.
+  // Position it at the current scrollTop so it always covers what's visible.
+  // This way it has zero effect on scroll height.
+  canvas.width  = viewerEl.clientWidth;
+  canvas.height = viewerEl.clientHeight;
+  canvas.style.top = viewerEl.scrollTop + 'px';
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3501,7 +3502,8 @@ function syncObscuredViewerToPointer(id, clientY) {
   if (!rows.length) return;
   const lh = lineHeightPx();
 
-  // Update canvas-relative mist center — fixed canvas uses viewport coords
+  // Canvas is inside the viewer, positioned at scrollTop, so coords are
+  // clientY-relative to the viewer rect (no scroll adjustment needed)
   const rect = viewerEl.getBoundingClientRect();
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
   _mistPy = clientY - rect.top;
@@ -3678,14 +3680,10 @@ function attachCipherObscuredViewerTracking() {
   // keyboard mode, via queueSync's own guard above — including the
   // scroll events keyboard navigation's own scrollIntoView triggers.)
   viewerEl.addEventListener('scroll', () => {
-    _mistResizeCanvas(); // reposition fixed canvas as viewer may have shifted
+    _mistResizeCanvas();
     queueSync(App._lastPointerY);
   }, { passive: true });
 
-  // Reposition fixed canvas on window resize (mobile browser chrome changes, etc.)
-  window.addEventListener('resize', () => _mistResizeCanvas(), { passive: true });
-
-  // Resize canvas when the viewer's container changes size.
   if (viewerEl.parentElement) {
     new ResizeObserver(() => _mistResizeCanvas()).observe(viewerEl.parentElement);
   }
@@ -3801,7 +3799,7 @@ function navigateCipherKeyboardRow(id, newIndex) {
     const rowRect = rows[clamped].getBoundingClientRect();
     const viewerRect = viewerEl.getBoundingClientRect();
     _mistPx = viewerRect.width / 2;
-    _mistPy = rowRect.top - viewerRect.top + rowRect.height / 2;
+    _mistPy = rowRect.top - viewerRect.top;
   }
 }
 
