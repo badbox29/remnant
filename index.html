@@ -113,9 +113,11 @@
              the cursor moves away — genuinely encrypted at rest in
              memory, not just visually masked on top of an already-
              fully-decrypted string. -->
-        <div class="cipher-obscured-viewer" id="cipher-obscured-viewer" aria-hidden="true" style="display:none; position:relative;">
-          <canvas class="cipher-mist-canvas" id="cipher-mist-canvas"></canvas>
+        <div class="cipher-obscured-viewer" id="cipher-obscured-viewer" aria-hidden="true" style="display:none;">
         </div>
+        <!-- Mist canvas is a sibling of the viewer, not inside it, so it
+             doesn't scroll with the content and doesn't block scroll events. -->
+        <canvas class="cipher-mist-canvas" id="cipher-mist-canvas" style="display:none;"></canvas>
         <!-- Plain Remnants always use this textarea. Ciphers ONLY use
              it while ILLUMINATED — that's the one mode where the full
              plaintext is meant to exist in memory at all, and editing
