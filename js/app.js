@@ -3423,7 +3423,7 @@ function _mistDraw() {
   viewerEl.querySelectorAll('.cipher-obscured-row.active .cipher-obscured-row-gold').forEach(el => {
     const rowRect = el.closest('.cipher-obscured-row').getBoundingClientRect();
     const rowRelX = px - (rowRect.left - viewerRect.left);
-    const rowRelY = (py - viewerEl.scrollTop) - (rowRect.top - viewerRect.top);
+    const rowRelY = py - (rowRect.top - viewerRect.top);
     const goldMask = `radial-gradient(ellipse ${goldOuter}px ${goldOuter*0.52}px at ${rowRelX}px ${rowRelY}px, transparent 0%, transparent ${innerPct}%, rgba(0,0,0,${MIST.GOLD_OPACITY}) ${Math.min(innerPct+20,85)}%, rgba(0,0,0,${MIST.GOLD_OPACITY*0.6}) 70%, transparent 100%)`;
     el.style.webkitMaskImage = goldMask;
     el.style.maskImage = goldMask;
@@ -3434,11 +3434,11 @@ function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   if (!canvas || !viewerEl) return;
-  // Use the parent's dimensions, not the viewer's scroll height,
-  // to avoid ResizeObserver feedback when row content changes size
-  const parent = viewerEl.parentElement;
-  canvas.width  = parent ? parent.offsetWidth  : viewerEl.offsetWidth;
-  canvas.height = parent ? parent.offsetHeight : viewerEl.offsetHeight;
+  const rect = viewerEl.getBoundingClientRect();
+  canvas.style.left   = rect.left + 'px';
+  canvas.style.top    = rect.top + 'px';
+  canvas.width        = rect.width;
+  canvas.height       = rect.height;
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3501,10 +3501,10 @@ function syncObscuredViewerToPointer(id, clientY) {
   if (!rows.length) return;
   const lh = lineHeightPx();
 
-  // Update canvas-relative mist center
+  // Update canvas-relative mist center — fixed canvas uses viewport coords
   const rect = viewerEl.getBoundingClientRect();
-  _mistPx = App._lastPointerX != null ? App._lastPointerX - rect.left : rect.width / 2;
-  _mistPy = clientY - rect.top + viewerEl.scrollTop;
+  _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
+  _mistPy = clientY - rect.top;
 
   const tops = Array.from(rows).map(r => Math.round(r.getBoundingClientRect().top));
   let hoveredIdx = 0;
@@ -3677,12 +3677,15 @@ function attachCipherObscuredViewerTracking() {
   // during a scroll) pointer position. (Also correctly a no-op during
   // keyboard mode, via queueSync's own guard above — including the
   // scroll events keyboard navigation's own scrollIntoView triggers.)
-  viewerEl.addEventListener('scroll', () => queueSync(App._lastPointerY), { passive: true });
+  viewerEl.addEventListener('scroll', () => {
+    _mistResizeCanvas(); // reposition fixed canvas as viewer may have shifted
+    queueSync(App._lastPointerY);
+  }, { passive: true });
+
+  // Reposition fixed canvas on window resize (mobile browser chrome changes, etc.)
+  window.addEventListener('resize', () => _mistResizeCanvas(), { passive: true });
 
   // Resize canvas when the viewer's container changes size.
-  // Watching the viewer itself causes feedback loops — when rows
-  // decrypt and gain text content the viewer's scrollHeight changes,
-  // firing the observer, resizing the canvas, which can reset scrollTop.
   if (viewerEl.parentElement) {
     new ResizeObserver(() => _mistResizeCanvas()).observe(viewerEl.parentElement);
   }
@@ -3792,13 +3795,13 @@ function navigateCipherKeyboardRow(id, newIndex) {
   rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
   activateRow(id, rows[clamped], clamped, myToken);
   rows[clamped].scrollIntoView({ block: 'center' });
-  // Position mist ellipse at center of the active row
+  // Position mist ellipse at center of the active row (viewport-relative for fixed canvas)
   const canvas = document.getElementById('cipher-mist-canvas');
   if (viewerEl && canvas) {
     const rowRect = rows[clamped].getBoundingClientRect();
     const viewerRect = viewerEl.getBoundingClientRect();
     _mistPx = viewerRect.width / 2;
-    _mistPy = rowRect.top - viewerRect.top + viewerEl.scrollTop + rowRect.height / 2;
+    _mistPy = rowRect.top - viewerRect.top + rowRect.height / 2;
   }
 }
 
