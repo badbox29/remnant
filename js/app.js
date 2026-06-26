@@ -3500,20 +3500,30 @@ function syncObscuredViewerToPointer(id, clientY) {
     hoveredIdx = i;
   }
 
-  // Determine which rows should be active (hovered + one above for the mist window)
+  // Which rows should be active (hovered + one above for the mist window)
   const toActivate = new Set([hoveredIdx]);
   if (hoveredIdx > 0) toActivate.add(hoveredIdx - 1);
 
-  const myToken = ++cipherViewerDecryptToken;
-  cipherViewerActiveRowIndex = hoveredIdx;
+  // Determine which rows are currently active
+  const currentlyActive = new Set();
+  rows.forEach((row, i) => { if (row.classList.contains('active')) currentlyActive.add(i); });
 
-  // Deactivate rows that are no longer in the window
+  // Check if anything actually needs to change
+  const needsChange = toActivate.size !== currentlyActive.size ||
+    [...toActivate].some(i => !currentlyActive.has(i));
+
+  if (!needsChange) return; // mist position still updates via _mistPx/_mistPy, but no decrypt churn
+
+  cipherViewerActiveRowIndex = hoveredIdx;
+  const myToken = ++cipherViewerDecryptToken;
+
+  // Deactivate rows leaving the window
   rows.forEach((row, i) => {
-    if (!toActivate.has(i) && row.classList.contains('active')) deactivateRow(row);
+    if (!toActivate.has(i) && currentlyActive.has(i)) deactivateRow(row);
   });
-  // Activate rows in the window
+  // Activate rows entering the window
   toActivate.forEach(i => {
-    if (rows[i]) activateRow(id, rows[i], i, myToken);
+    if (!currentlyActive.has(i) && rows[i]) activateRow(id, rows[i], i, myToken);
   });
 }
 
