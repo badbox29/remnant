@@ -3661,51 +3661,16 @@ function attachCipherObscuredViewerTracking() {
     enterCipherKeyboardMode();
   });
 
-  let _touchStartY = 0, _touchStartX = 0, _touchIsScroll = false;
-
-  viewerEl.addEventListener('touchstart', (e) => {
-    if (!e.touches?.length) return;
-    _touchStartX = e.touches[0].clientX;
-    _touchStartY = e.touches[0].clientY;
-    _touchIsScroll = false; // reset — decide on first touchmove
-  }, { passive: false });
-
   viewerEl.addEventListener('touchmove', (e) => {
     if (!e.touches?.length) return;
     const x = e.touches[0].clientX;
     const y = e.touches[0].clientY;
     App._lastPointerX = x;
-
-    // On first move, decide: is this a scroll gesture or a read gesture?
-    // Predominantly vertical = scroll; horizontal or ambiguous = read (mist move).
-    if (!_touchIsScroll) {
-      const dx = Math.abs(x - _touchStartX);
-      const dy = Math.abs(y - _touchStartY);
-      if (dy > dx && dy > 6) {
-        _touchIsScroll = true;
-      }
-    }
-
-    if (_touchIsScroll) {
-      // Let edge-zone auto-scroll handle it; don't preventDefault so
-      // native scroll works in the middle of the document
-      updateTouchEdgeAutoScroll(viewerEl, y);
-      return;
-    }
-
-    // Read gesture — suppress native scroll, move mist only
-    e.preventDefault();
     queueSync(y - TOUCH_REVEAL_OFFSET_PX);
-  }, { passive: false });
-
-  viewerEl.addEventListener('touchend', (e) => {
-    stopTouchEdgeAutoScroll();
-    _touchIsScroll = false;
-  });
-  viewerEl.addEventListener('touchcancel', (e) => {
-    stopTouchEdgeAutoScroll();
-    _touchIsScroll = false;
-  });
+    updateTouchEdgeAutoScroll(viewerEl, y);
+  }, { passive: true });
+  viewerEl.addEventListener('touchend', stopTouchEdgeAutoScroll);
+  viewerEl.addEventListener('touchcancel', stopTouchEdgeAutoScroll);
 
   // Native scroll — the viewer is a real scroll container with real
   // per-row content height, so scrolling just works; only the active-
