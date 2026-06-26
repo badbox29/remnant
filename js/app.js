@@ -3678,8 +3678,11 @@ function attachCipherObscuredViewerTracking() {
 
     touchLayer.addEventListener('touchstart', (e) => {
       if (!e.touches?.length) return;
-      lastTouchY = e.touches[0].clientY;
-      App._lastPointerX = e.touches[0].clientX;
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      lastTouchY = y;
+      App._lastPointerX = x;
+      queueSync(y);
     }, { passive: true });
 
     touchLayer.addEventListener('touchmove', (e) => {
