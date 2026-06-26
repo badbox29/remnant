@@ -3343,86 +3343,92 @@ function _mistDraw() {
 
   const ctx = canvas.getContext('2d');
   const px = _mistPx, py = _mistPy;
-  const HW = MIST.HW, HH = MIST.HH, THICK = MIST.THICKNESS;
+  const HW = MIST.HW, HH = MIST.HH;
+  const hue = MIST.GOLD_HUE, sat = MIST.GOLD_SAT;
   const t = _mistT;
 
-  // Sharp text mask — canvas handles the primary masking; no per-element
-  // CSS mask needed. The canvas paints --paper color over everything except
-  // the ellipse window, revealing whatever text is rendered underneath.
+  const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim() || '#F7F4ED';
 
-  // Gold layer: halo ring mask, coordinates relative to each row element
+  ctx.clearRect(0, 0, W, H);
+
+  // Fill with background color
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
+
+  // Cut ellipse hole using destination-out
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+
+  // Turbulence: sample fbm at ring points and jitter the hole edge
+  const noiseSamples = 12;
+  for (let s = 0; s < noiseSamples; s++) {
+    const angle = (s / noiseSamples) * Math.PI * 2;
+    const nx = Math.cos(angle) * 0.5 + t * 0.6;
+    const ny = Math.sin(angle) * 0.5 + t * 0.35;
+    const n = (_fbm(nx, ny) * 0.65 + _fbm(nx + 3.7, ny + 1.9) * 0.35);
+    const jitter = (n + 0.5) * HW * 0.18;
+    const cx2 = px + Math.cos(angle) * jitter * 0.6;
+    const cy2 = py + Math.sin(angle) * jitter * 0.35;
+    const r = HW * 0.75 + jitter;
+    const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, r);
+    grad.addColorStop(0, 'rgba(0,0,0,0.22)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.save();
+    ctx.translate(px, py); ctx.scale(1, HH / HW); ctx.translate(-px, -py);
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  // Core hard ellipse
+  const coreGrad = ctx.createRadialGradient(px, py, 0, px, py, HW * 0.85);
+  coreGrad.addColorStop(0, 'rgba(0,0,0,1)');
+  coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.save();
+  ctx.translate(px, py); ctx.scale(1, HH / HW); ctx.translate(-px, -py);
+  ctx.fillStyle = coreGrad;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  ctx.restore(); // end destination-out
+
+  // Amber glow ring (source-over, very subtle)
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  const glow = ctx.createRadialGradient(px, py, HW * 0.4, px, py, HW * 1.6);
+  glow.addColorStop(0,   'rgba(0,0,0,0)');
+  glow.addColorStop(0.5, `hsla(${hue},${sat}%,35%,0.07)`);
+  glow.addColorStop(0.8, `hsla(${hue},${sat}%,25%,0.12)`);
+  glow.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+
+  // Gold layer mask — row-relative coordinates
   const gw = MIST.GOLD_WIDTH;
   const goldOuter = HW * gw;
   const goldInner = HW * 0.45;
   const innerPct = Math.round(goldInner / goldOuter * 100);
-  const hue = MIST.GOLD_HUE, sat = MIST.GOLD_SAT;
+  const viewerRect = viewerEl.getBoundingClientRect();
   viewerEl.querySelectorAll('.cipher-obscured-row.active .cipher-obscured-row-gold').forEach(el => {
     const rowRect = el.closest('.cipher-obscured-row').getBoundingClientRect();
-    const viewerRect = viewerEl.getBoundingClientRect();
-    // Convert viewer-relative mist center to row-relative for the CSS mask
     const rowRelX = px - (rowRect.left - viewerRect.left);
-    const rowRelY = py - (rowRect.top - viewerRect.top + viewerEl.scrollTop) + viewerEl.scrollTop;
+    const rowRelY = (py - viewerEl.scrollTop) - (rowRect.top - viewerRect.top);
     const goldMask = `radial-gradient(ellipse ${goldOuter}px ${goldOuter*0.52}px at ${rowRelX}px ${rowRelY}px, transparent 0%, transparent ${innerPct}%, rgba(0,0,0,${MIST.GOLD_OPACITY}) ${Math.min(innerPct+20,85)}%, rgba(0,0,0,${MIST.GOLD_OPACITY*0.6}) 70%, transparent 100%)`;
     el.style.webkitMaskImage = goldMask;
     el.style.maskImage = goldMask;
   });
-
-  // Mist canvas — full opaque background with turbulence-edged ellipse hole
-  // Use the actual background color of the viewer, not hardcoded black
-  const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim() || '#ffffff';
-  // Parse hex to r,g,b
-  let bgR = 247, bgG = 244, bgB = 237; // fallback: light mode --paper
-  const hexMatch = bgColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-  if (hexMatch) { bgR = parseInt(hexMatch[1],16); bgG = parseInt(hexMatch[2],16); bgB = parseInt(hexMatch[3],16); }
-
-  ctx.clearRect(0, 0, W, H);
-  const img = ctx.createImageData(W, H);
-  const d = img.data;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const dx = (x - px) / HW, dy = (y - py) / HH;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      let alpha;
-      if (dist <= 1.0) {
-        alpha = 0;
-      } else {
-        const outer = 1.0 + THICK / Math.min(HW, HH);
-        if (dist >= outer) {
-          alpha = 255;
-        } else {
-          const te = (dist - 1.0) / (outer - 1.0);
-          const nx = x * 0.009 + t * 0.6, ny = y * 0.009 + t * 0.35;
-          const nm = _fbm(nx, ny) * 0.65 + _fbm(nx + 3.7, ny + 1.9) * 0.35;
-          const disp = te + nm * 0.4 * (1 - te * 0.5);
-          const cl = Math.max(0, Math.min(1, disp));
-          alpha = Math.round(cl * cl * (3 - 2 * cl) * 255);
-        }
-      }
-      const idx = (y * W + x) * 4;
-      d[idx] = bgR; d[idx+1] = bgG; d[idx+2] = bgB; d[idx+3] = alpha;
-    }
-  }
-  ctx.putImageData(img, 0, 0);
-
-  // Amber glow at mist boundary (destination-over so only inside hole)
-  ctx.save();
-  ctx.globalCompositeOperation = 'destination-over';
-  const glow = ctx.createRadialGradient(px, py, HW*0.5, px, py, HW*1.6);
-  glow.addColorStop(0,    'rgba(0,0,0,0)');
-  glow.addColorStop(0.45, `hsla(${hue},${sat}%,35%,0.10)`);
-  glow.addColorStop(0.75, `hsla(${hue},${sat}%,25%,0.20)`);
-  glow.addColorStop(1,    'rgba(0,0,0,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
-  ctx.restore();
 }
 
 function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   if (!canvas || !viewerEl) return;
-  canvas.width = viewerEl.offsetWidth;
-  canvas.height = viewerEl.offsetHeight;
+  // Use the parent's dimensions, not the viewer's scroll height,
+  // to avoid ResizeObserver feedback when row content changes size
+  const parent = viewerEl.parentElement;
+  canvas.width  = parent ? parent.offsetWidth  : viewerEl.offsetWidth;
+  canvas.height = parent ? parent.offsetHeight : viewerEl.offsetHeight;
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3665,8 +3671,13 @@ function attachCipherObscuredViewerTracking() {
   // scroll events keyboard navigation's own scrollIntoView triggers.)
   viewerEl.addEventListener('scroll', () => queueSync(App._lastPointerY), { passive: true });
 
-  // Resize canvas when viewer size changes (e.g. nav panel resize)
-  new ResizeObserver(() => _mistResizeCanvas()).observe(viewerEl);
+  // Resize canvas when the viewer's container changes size.
+  // Watching the viewer itself causes feedback loops — when rows
+  // decrypt and gain text content the viewer's scrollHeight changes,
+  // firing the observer, resizing the canvas, which can reset scrollTop.
+  if (viewerEl.parentElement) {
+    new ResizeObserver(() => _mistResizeCanvas()).observe(viewerEl.parentElement);
+  }
 }
 
 // ─── Touch edge auto-scroll ─────────────────────────────────────────
