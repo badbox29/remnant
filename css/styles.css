@@ -1111,7 +1111,8 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
    still reach the viewer underneath. */
 .cipher-mist-canvas {
   position: absolute;
-  inset: 0;
+  top: 0;
+  left: 0;
   pointer-events: none;
   z-index: 10;
 }
