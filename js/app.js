@@ -3505,14 +3505,13 @@ function syncObscuredViewerToPointer(id, clientY) {
   const rows = viewerEl.querySelectorAll('.cipher-obscured-row');
   if (!rows.length) return;
   const lh = lineHeightPx();
-
   const rect = viewerEl.getBoundingClientRect();
+
+  // Always update mist position — even if active rows haven't changed
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
   _mistPy = Math.max(0, Math.min(rect.height, clientY - rect.top));
 
-  // Clamp clientY to viewer bounds before computing scroll-adjusted Y.
-  // When finger is in the extended touch zone above/below the viewer,
-  // treat it as touching the very top/bottom of the viewer respectively.
+  // Clamp clientY to viewer bounds for row detection
   const clampedClientY = Math.max(rect.top, Math.min(rect.bottom, clientY));
   const scrollY = clampedClientY - rect.top + viewerEl.scrollTop;
   const offsets = Array.from(rows).map(r => r.offsetTop);
@@ -3525,28 +3524,23 @@ function syncObscuredViewerToPointer(id, clientY) {
     hoveredIdx = i;
   }
 
-  // Which rows should be active (hovered + one above for the mist window)
   const toActivate = new Set([hoveredIdx]);
   if (hoveredIdx > 0) toActivate.add(hoveredIdx - 1);
 
-  // Determine which rows are currently active
   const currentlyActive = new Set();
   rows.forEach((row, i) => { if (row.classList.contains('active')) currentlyActive.add(i); });
 
-  // Check if anything actually needs to change
   const needsChange = toActivate.size !== currentlyActive.size ||
     [...toActivate].some(i => !currentlyActive.has(i));
 
-  if (!needsChange) return; // mist position still updates via _mistPx/_mistPy, but no decrypt churn
+  if (!needsChange) return;
 
   cipherViewerActiveRowIndex = hoveredIdx;
   const myToken = ++cipherViewerDecryptToken;
 
-  // Deactivate rows leaving the window
   rows.forEach((row, i) => {
     if (!toActivate.has(i) && currentlyActive.has(i)) deactivateRow(row);
   });
-  // Activate rows entering the window
   toActivate.forEach(i => {
     if (!currentlyActive.has(i) && rows[i]) activateRow(id, rows[i], i, myToken);
   });
