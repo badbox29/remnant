@@ -1111,9 +1111,14 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
    handling all masking. pointer-events:none so scroll/mouse events
    still reach the viewer underneath. */
 .cipher-mist-canvas {
-  position: fixed;
+  position: absolute;
+  top: 0;
+  left: 0;
   pointer-events: none;
   z-index: 10;
+  /* Canvas is sized via JS to match the viewer's visible rect.
+     It does NOT use inset:0 or height:100% so it never contributes
+     to the viewer's scroll height. */
 }
 
 /* ── Scratchpad ──────────────────────────────────────────────────── */
