@@ -3510,10 +3510,11 @@ function syncObscuredViewerToPointer(id, clientY) {
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
   _mistPy = Math.max(0, Math.min(rect.height, clientY - rect.top));
 
-  // Use scroll-adjusted Y for row detection so rows scrolled into view
-  // but pushed below the canvas edge are still reachable.
-  // offsetTop is relative to viewerEl, scrollTop adjusts for current scroll.
-  const scrollY = clientY - rect.top + viewerEl.scrollTop;
+  // Clamp clientY to viewer bounds before computing scroll-adjusted Y.
+  // When finger is in the extended touch zone above/below the viewer,
+  // treat it as touching the very top/bottom of the viewer respectively.
+  const clampedClientY = Math.max(rect.top, Math.min(rect.bottom, clientY));
+  const scrollY = clampedClientY - rect.top + viewerEl.scrollTop;
   const offsets = Array.from(rows).map(r => r.offsetTop);
 
   let hoveredIdx = 0;
