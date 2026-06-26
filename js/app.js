@@ -3397,17 +3397,19 @@ function _mistDraw() {
   }
   ctx.putImageData(img, 0, 0);
 
-  // Gold glow ring — painted on top with source-over at very low opacity
+  // Gold glow ring — ellipse-scaled to match the hole boundary
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
-  const glow = ctx.createRadialGradient(px, py, HW * 0.5, px, py, HW * 1.8);
+  ctx.translate(px, py);
+  ctx.scale(1, HH / HW);
+  ctx.translate(-px, -py);
+  const glow = ctx.createRadialGradient(px, py, HW * 0.75, px, py, HW * 1.6);
   glow.addColorStop(0,    'rgba(0,0,0,0)');
-  glow.addColorStop(0.55, `hsla(${hue},${sat}%,45%,0.0)`);
-  glow.addColorStop(0.72, `hsla(${hue},${sat}%,45%,0.14)`);
-  glow.addColorStop(0.88, `hsla(${hue},${sat}%,35%,0.07)`);
+  glow.addColorStop(0.35, `hsla(${hue},${sat}%,50%,0.22)`);
+  glow.addColorStop(0.6,  `hsla(${hue},${sat}%,45%,0.12)`);
   glow.addColorStop(1,    'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(0, 0, W, H * (HW / HH));
   ctx.restore();
 
   // Gold CSS mask on gold text elements
