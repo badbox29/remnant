@@ -3434,9 +3434,9 @@ function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   if (!canvas || !viewerEl) return;
+  canvas.style.top = viewerEl.scrollTop + 'px';
   canvas.width  = viewerEl.clientWidth;
   canvas.height = viewerEl.clientHeight;
-  canvas.style.top = '0';
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3677,6 +3677,7 @@ function attachCipherObscuredViewerTracking() {
   // keyboard mode, via queueSync's own guard above — including the
   // scroll events keyboard navigation's own scrollIntoView triggers.)
   viewerEl.addEventListener('scroll', () => {
+    _mistResizeCanvas();
     queueSync(App._lastPointerY);
   }, { passive: true });
 
