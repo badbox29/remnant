@@ -3347,71 +3347,70 @@ function _mistDraw() {
   const hue = MIST.GOLD_HUE, sat = MIST.GOLD_SAT;
   const t = _mistT;
 
-  const bgColor = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim() || '#F7F4ED';
+  const bgColor = getComputedStyle(document.documentElement)
+    .getPropertyValue('--paper').trim() || '#F7F4ED';
 
-  // Strategy: canvas is a solid bg-colored overlay with a transparent hole.
-  // Text renders in the DOM underneath; where canvas is transparent, text shows through.
-  // 1. Fill entirely with background color (alpha=1 everywhere)
-  // 2. Cut the ellipse hole by setting alpha=0 in the center
-  // 3. Mist edge = gradient from alpha=0 (hole) to alpha=1 (opaque bg), with turbulence
+  // The canvas is a solid bg-colored sheet with a transparent hole cut in it.
+  // Text lives in the DOM below; where the canvas is transparent, text shows through.
 
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = bgColor;
-  ctx.fillRect(0, 0, W, H);
+  // Build the mask as an offscreen ImageData — gives full per-pixel control
+  // without transform weirdness, and only operates on the alpha channel.
+  const img = ctx.createImageData(W, H);
+  const d = img.data;
 
-  // Cut hole: destination-out zeroes alpha where we paint
-  ctx.save();
-  ctx.globalCompositeOperation = 'destination-out';
+  // Parse bg color to r,g,b once
+  let bgR = 28, bgG = 26, bgB = 24; // dark mode fallback
+  const m = bgColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  if (m) { bgR = parseInt(m[1],16); bgG = parseInt(m[2],16); bgB = parseInt(m[3],16); }
 
-  // Apply ellipse scaling via transform so gradients work in ellipse space
-  ctx.translate(px, py);
-  ctx.scale(1, HH / HW);
-  ctx.translate(-px, -py);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      // Normalized ellipse distance
+      const dx = (x - px) / HW;
+      const dy = (y - py) / HH;
+      const dist = Math.sqrt(dx*dx + dy*dy);
 
-  // Turbulent edge: multiple noise-displaced radial gradients eating into the fill
-  const noiseSamples = 10;
-  for (let s = 0; s < noiseSamples; s++) {
-    const angle = (s / noiseSamples) * Math.PI * 2;
-    const nx = Math.cos(angle) * 0.5 + t * 0.6;
-    const ny = Math.sin(angle) * 0.5 + t * 0.35;
-    const n = _fbm(nx, ny) * 0.65 + _fbm(nx + 3.7, ny + 1.9) * 0.35;
-    const jitter = (n + 0.5) * HW * 0.22;
-    // In the scaled (ellipse) coordinate space, displace outward from center
-    const cx2 = px + Math.cos(angle) * jitter * 0.5;
-    const cy2 = py + Math.sin(angle) * jitter * 0.35 * (HW / HH); // unscale Y jitter
-    const r = HW * 0.6 + jitter;
-    const grad = ctx.createRadialGradient(cx2, cy2, 0, cx2, cy2, r);
-    grad.addColorStop(0,   'rgba(0,0,0,0.25)');
-    grad.addColorStop(0.6, 'rgba(0,0,0,0.1)');
-    grad.addColorStop(1,   'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H * (HW / HH));
+      // Sample turbulence at the boundary ring only (skip if clearly inside/outside)
+      let alpha;
+      if (dist < 0.6) {
+        alpha = 0; // definitely inside — fully transparent (text shows)
+      } else if (dist > 2.2) {
+        alpha = 255; // definitely outside — fully opaque (bg color)
+      } else {
+        // Mist ring: turbulence-distorted gradient
+        const nx = x * 0.011 + t * 0.6;
+        const ny = y * 0.011 + t * 0.35;
+        const noise = _fbm(nx, ny) * 0.65 + _fbm(nx + 3.7, ny + 1.9) * 0.35;
+        // Distort the effective distance outward at the boundary
+        const distorted = dist + noise * 0.45 * Math.max(0, 1.0 - Math.abs(dist - 1.2));
+        const t_edge = Math.max(0, Math.min(1, (distorted - 0.9) / 1.1));
+        const smooth = t_edge * t_edge * (3 - 2 * t_edge);
+        alpha = Math.round(smooth * 255);
+      }
+
+      const i = (y * W + x) * 4;
+      d[i]   = bgR;
+      d[i+1] = bgG;
+      d[i+2] = bgB;
+      d[i+3] = alpha;
+    }
   }
+  ctx.putImageData(img, 0, 0);
 
-  // Core solid hole in the center
-  const core = ctx.createRadialGradient(px, py, 0, px, py, HW * 0.8);
-  core.addColorStop(0,   'rgba(0,0,0,1)');
-  core.addColorStop(0.85,'rgba(0,0,0,1)');
-  core.addColorStop(1,   'rgba(0,0,0,0)');
-  ctx.fillStyle = core;
-  ctx.fillRect(0, 0, W, H * (HW / HH));
-
-  ctx.restore(); // back to normal composite, normal transform
-
-  // Gold glow ring painted source-over at the edge of the hole
+  // Gold glow ring — painted on top with source-over at very low opacity
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
-  const glow = ctx.createRadialGradient(px, py, HW * 0.3, px, py, HW * 1.4);
-  glow.addColorStop(0,   'rgba(0,0,0,0)');
+  const glow = ctx.createRadialGradient(px, py, HW * 0.5, px, py, HW * 1.8);
+  glow.addColorStop(0,    'rgba(0,0,0,0)');
   glow.addColorStop(0.55, `hsla(${hue},${sat}%,45%,0.0)`);
-  glow.addColorStop(0.75, `hsla(${hue},${sat}%,45%,0.12)`);
-  glow.addColorStop(0.9,  `hsla(${hue},${sat}%,35%,0.06)`);
-  glow.addColorStop(1,   'rgba(0,0,0,0)');
+  glow.addColorStop(0.72, `hsla(${hue},${sat}%,45%,0.14)`);
+  glow.addColorStop(0.88, `hsla(${hue},${sat}%,35%,0.07)`);
+  glow.addColorStop(1,    'rgba(0,0,0,0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
 
-  // Gold layer CSS mask on the gold text elements
+  // Gold CSS mask on gold text elements
   const gw = MIST.GOLD_WIDTH;
   const goldOuter = HW * gw;
   const goldInner = HW * 0.45;
