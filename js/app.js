@@ -3508,7 +3508,7 @@ function syncObscuredViewerToPointer(id, clientY) {
 
   const rect = viewerEl.getBoundingClientRect();
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
-  _mistPy = Math.max(MIST.HH + MIST.THICKNESS, Math.min(rect.height - MIST.HH - MIST.THICKNESS, clientY - rect.top));
+  _mistPy = Math.max(0, Math.min(rect.height, clientY - rect.top));
 
   // Use scroll-adjusted Y for row detection so rows scrolled into view
   // but pushed below the canvas edge are still reachable.
@@ -3704,11 +3704,9 @@ function attachCipherObscuredViewerTracking() {
         // Edge zone — hand off to the RAF-based auto-scroller
         updateTouchEdgeAutoScroll(viewerEl, y);
       } else {
-        // Middle zone — stop any active edge scroll, move mist
+        // Middle zone — move mist to finger position directly
         stopTouchEdgeAutoScroll();
-        // Pass raw clientY — syncObscuredViewerToPointer applies the
-        // upward offset internally so the mist sits above the finger
-        queueSync(y - TOUCH_REVEAL_OFFSET_PX);
+        queueSync(y);
       }
     }, { passive: false });
 
