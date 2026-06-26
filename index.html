@@ -115,8 +115,8 @@
              fully-decrypted string. -->
         <div class="cipher-obscured-viewer" id="cipher-obscured-viewer" aria-hidden="true" style="display:none;">
         </div>
-        <!-- Mist canvas is a sibling of the viewer, not inside it, so it
-             doesn't scroll with the content and doesn't block scroll events. -->
+        <!-- Mist canvas overlays the viewer but is positioned via JS to match
+             the viewer's screen rect exactly, so it never affects scroll. -->
         <canvas class="cipher-mist-canvas" id="cipher-mist-canvas" style="display:none;"></canvas>
         <!-- Plain Remnants always use this textarea. Ciphers ONLY use
              it while ILLUMINATED — that's the one mode where the full
