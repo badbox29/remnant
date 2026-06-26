@@ -3099,7 +3099,9 @@ function updateCipherControlsVisibility(id) {
   viewerEl.style.display = showViewer ? '' : 'none';
   bodyEl.style.display   = showViewer ? 'none' : '';
   const mistCanvas = document.getElementById('cipher-mist-canvas');
+  const touchLayer = document.getElementById('cipher-touch-layer');
   if (mistCanvas) mistCanvas.style.display = showViewer ? '' : 'none';
+  if (touchLayer) touchLayer.style.display = showViewer ? '' : 'none';
   if (showViewer) { _mistResizeCanvas(); _mistStart(); } else { _mistStop(); }
 
   // Inscribe button: shown for plain Remnants and Fragments (not Ciphers, not empty)
@@ -3432,14 +3434,25 @@ function _mistDraw() {
 
 function _mistResizeCanvas() {
   const canvas = document.getElementById('cipher-mist-canvas');
+  const touchLayer = document.getElementById('cipher-touch-layer');
   const viewerEl = document.getElementById('cipher-obscured-viewer');
-  if (!canvas || !viewerEl) return;
-  // Canvas lives in note-body-wrap (position:relative), same as viewer.
-  // Size it to the viewer's client rect so it overlays exactly.
-  canvas.width  = viewerEl.clientWidth;
-  canvas.height = viewerEl.clientHeight;
-  canvas.style.top  = viewerEl.offsetTop + 'px';
-  canvas.style.left = viewerEl.offsetLeft + 'px';
+  if (!viewerEl) return;
+  const w = viewerEl.clientWidth;
+  const h = viewerEl.clientHeight;
+  const t = viewerEl.offsetTop;
+  const l = viewerEl.offsetLeft;
+  if (canvas) {
+    canvas.width  = w;
+    canvas.height = h;
+    canvas.style.top  = t + 'px';
+    canvas.style.left = l + 'px';
+  }
+  if (touchLayer) {
+    touchLayer.style.width  = w + 'px';
+    touchLayer.style.height = h + 'px';
+    touchLayer.style.top    = t + 'px';
+    touchLayer.style.left   = l + 'px';
+  }
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3661,26 +3674,51 @@ function attachCipherObscuredViewerTracking() {
     enterCipherKeyboardMode();
   });
 
-  viewerEl.addEventListener('touchmove', (e) => {
-    if (!e.touches?.length) return;
-    const x = e.touches[0].clientX;
-    const y = e.touches[0].clientY;
-    App._lastPointerX = x;
-    queueSync(y - TOUCH_REVEAL_OFFSET_PX);
-    updateTouchEdgeAutoScroll(viewerEl, y);
-  }, { passive: true });
-  viewerEl.addEventListener('touchend', stopTouchEdgeAutoScroll);
-  viewerEl.addEventListener('touchcancel', stopTouchEdgeAutoScroll);
-
-  // Native scroll — the viewer is a real scroll container with real
-  // per-row content height, so scrolling just works; only the active-
-  // row DETECTION needs a refresh as rows move under the (stationary,
-  // during a scroll) pointer position. (Also correctly a no-op during
-  // keyboard mode, via queueSync's own guard above — including the
-  // scroll events keyboard navigation's own scrollIntoView triggers.)
   viewerEl.addEventListener('scroll', () => {
     queueSync(App._lastPointerY);
   }, { passive: true });
+
+  // ── Touch capture layer (mobile) ────────────────────────────────
+  // Sits above the viewer, owns all touch with touch-action:none.
+  // JS decides: edge zone = scroll viewer, middle = move mist.
+  // Viewer never sees touch events — scrollTop driven entirely by JS.
+  const touchLayer = document.getElementById('cipher-touch-layer');
+  if (touchLayer) {
+    let lastTouchY = 0;
+
+    touchLayer.addEventListener('touchstart', (e) => {
+      if (!e.touches?.length) return;
+      lastTouchY = e.touches[0].clientY;
+      App._lastPointerX = e.touches[0].clientX;
+    }, { passive: true });
+
+    touchLayer.addEventListener('touchmove', (e) => {
+      if (!e.touches?.length) return;
+      e.preventDefault();
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      lastTouchY = y;
+      App._lastPointerX = x;
+
+      const rect = viewerEl.getBoundingClientRect();
+      const zoneSize = rect.height * EDGE_ZONE_FRACTION;
+      const distFromTop    = y - rect.top;
+      const distFromBottom = rect.bottom - y;
+
+      if (distFromBottom < zoneSize) {
+        const progress = 1 - Math.max(0, distFromBottom) / zoneSize;
+        viewerEl.scrollTop += EDGE_SCROLL_MAX_PX_PER_FRAME * progress * progress;
+      } else if (distFromTop < zoneSize) {
+        const progress = 1 - Math.max(0, distFromTop) / zoneSize;
+        viewerEl.scrollTop -= EDGE_SCROLL_MAX_PX_PER_FRAME * progress * progress;
+      } else {
+        queueSync(y - TOUCH_REVEAL_OFFSET_PX);
+      }
+    }, { passive: false });
+
+    touchLayer.addEventListener('touchend', stopTouchEdgeAutoScroll);
+    touchLayer.addEventListener('touchcancel', stopTouchEdgeAutoScroll);
+  }
 
   // note-body-wrap has overflow:hidden (required for EasyMDE layout), which
   // means wheel events hit it first and get consumed before reaching the
