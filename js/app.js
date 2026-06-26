@@ -3699,10 +3699,11 @@ function attachCipherObscuredViewerTracking() {
       const distFromBottom = rect.bottom - y;
 
       if (distFromBottom < zoneSize || distFromTop < zoneSize) {
-        // Edge zone — hand off to the RAF-based auto-scroller
+        // Edge zone — scroll AND move mist
         updateTouchEdgeAutoScroll(viewerEl, y);
+        queueSync(y);
       } else {
-        // Middle zone — move mist to finger position directly
+        // Middle zone — move mist, stop any edge scroll
         stopTouchEdgeAutoScroll();
         queueSync(y);
       }
