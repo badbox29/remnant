@@ -3267,8 +3267,8 @@ let cipherViewerDecryptToken = 0;
 
 // ── Mist parameters (tuned from prototype) ──────────────────────────
 const MIST = {
-  HW: 80,          // half-width of clear ellipse (px)
-  get HH() { return this.HW * 0.52; }, // half-height
+  HW: 65,          // half-width of clear ellipse (px)
+  get HH() { return this.HW * 0.35; }, // half-height — flatter ellipse
   THICKNESS: 40,   // mist band thickness (px)
   GOLD_BLUR: 5,    // px blur on gold layer
   GOLD_WIDTH: 2.5, // gold ellipse scale factor
