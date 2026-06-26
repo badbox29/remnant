@@ -3444,29 +3444,6 @@ function _mistResizeCanvas() {
   canvas.height       = h;
   canvas.style.width  = w + 'px';
   canvas.style.height = h + 'px';
-
-  // DEBUG OVERLAY — remove before ship
-  let dbg = document.getElementById('_mist_debug');
-  if (!dbg) {
-    dbg = document.createElement('div');
-    dbg.id = '_mist_debug';
-    dbg.style.cssText = 'position:fixed;top:60px;left:4px;z-index:99999;background:rgba(0,0,0,0.85);color:#ff0;font:11px monospace;padding:6px 8px;border-radius:6px;pointer-events:none;white-space:pre;';
-    document.body.appendChild(dbg);
-  }
-  const wr = wrap.getBoundingClientRect();
-  const vr = viewerEl.getBoundingClientRect();
-  const cr = canvas.getBoundingClientRect();
-  const tl = document.getElementById('cipher-touch-layer');
-  const tr = tl ? tl.getBoundingClientRect() : {};
-  dbg.textContent = [
-    `wrap:   ${Math.round(wr.left)},${Math.round(wr.top)} ${Math.round(wr.width)}x${Math.round(wr.height)}`,
-    `viewer: ${Math.round(vr.left)},${Math.round(vr.top)} ${Math.round(vr.width)}x${Math.round(vr.height)}`,
-    `canvas: ${Math.round(cr.left)},${Math.round(cr.top)} ${Math.round(cr.width)}x${Math.round(cr.height)}`,
-    `touch:  ${Math.round(tr.left)},${Math.round(tr.top)} ${Math.round(tr.width)}x${Math.round(tr.height)}`,
-    `buf:    ${canvas.width}x${canvas.height}`,
-    `win:    ${window.innerWidth}x${window.innerHeight}`,
-    `vvp:    ${Math.round(window.visualViewport?.width)}x${Math.round(window.visualViewport?.height)}`,
-  ].join('\n');
 }
 
 // ── Row build helpers ────────────────────────────────────────────────
@@ -3531,13 +3508,19 @@ function syncObscuredViewerToPointer(id, clientY) {
 
   const rect = viewerEl.getBoundingClientRect();
   _mistPx = (App._lastPointerX != null ? App._lastPointerX : rect.left + rect.width / 2) - rect.left;
-  _mistPy = Math.max(MIST.HH, Math.min(rect.height - MIST.HH, clientY - rect.top));
+  _mistPy = Math.max(MIST.HH + MIST.THICKNESS, Math.min(rect.height - MIST.HH - MIST.THICKNESS, clientY - rect.top));
 
-  const tops = Array.from(rows).map(r => Math.round(r.getBoundingClientRect().top));
+  // Use scroll-adjusted Y for row detection so rows scrolled into view
+  // but pushed below the canvas edge are still reachable.
+  // offsetTop is relative to viewerEl, scrollTop adjusts for current scroll.
+  const scrollY = clientY - rect.top + viewerEl.scrollTop;
+  const offsets = Array.from(rows).map(r => r.offsetTop);
+
   let hoveredIdx = 0;
-  for (let i = 0; i < tops.length; i++) {
-    if (clientY >= tops[i] - lh / 2 && clientY < tops[i] + lh / 2) { hoveredIdx = i; break; }
-    if (clientY < tops[i]) { hoveredIdx = Math.max(0, i - 1); break; }
+  for (let i = 0; i < offsets.length; i++) {
+    const rowH = rows[i].offsetHeight || lh;
+    if (scrollY >= offsets[i] && scrollY < offsets[i] + rowH) { hoveredIdx = i; break; }
+    if (scrollY < offsets[i]) { hoveredIdx = Math.max(0, i - 1); break; }
     hoveredIdx = i;
   }
 
