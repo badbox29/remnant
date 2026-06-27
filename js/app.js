@@ -3363,7 +3363,7 @@ function _mistDraw() {
     // ── Keyboard mode: full-width horizontal strip reveal ────────────
     // The active row is fully revealed across the entire width.
     // Above and below fade into mist with turbulence-distorted edges.
-    const stripHH = MIST.HH * 0.4; // vertical half-height — roughly one line
+    const stripHH = 13; // px — exactly one line of text tall
     const mistBand = MIST.THICKNESS * 1.2;
 
     const img = ctx.createImageData(W, H);
@@ -3900,6 +3900,8 @@ function navigateCipherKeyboardRow(id, newIndex) {
   if (prevIdx >= 0 && rows[prevIdx]) deactivateRow(rows[prevIdx]);
   rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
   activateRow(id, rows[clamped], clamped, myToken);
+  if (rows[clamped - 1]) activateRow(id, rows[clamped - 1], clamped - 1, myToken);
+  if (rows[clamped + 1]) activateRow(id, rows[clamped + 1], clamped + 1, myToken);
   rows[clamped].scrollIntoView({ block: 'center' });
   // Position mist ellipse at center of the active row (viewport-relative for fixed canvas)
   const canvas = document.getElementById('cipher-mist-canvas');
