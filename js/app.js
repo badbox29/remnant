@@ -3315,6 +3315,7 @@ let _mistT = 0;
 let _mistRAF = null;
 let _mistPx = -9999, _mistPy = -9999; // canvas-relative coordinates of ellipse center
 let _mistActive = false;              // true while the viewer is visible and animating
+let _mistKeyboardMode = false;        // true when keyboard nav is active — draws full-width strip instead of ellipse
 
 function _mistStart() {
   if (_mistRAF) return;
@@ -3354,38 +3355,86 @@ function _mistDraw() {
   const bgColor = getComputedStyle(document.documentElement)
     .getPropertyValue('--paper').trim() || '#F7F4ED';
 
-  // The canvas is a solid bg-colored sheet with a transparent hole cut in it.
-  // Text lives in the DOM below; where the canvas is transparent, text shows through.
-
-  // Build the mask as an offscreen ImageData — gives full per-pixel control
-  // without transform weirdness, and only operates on the alpha channel.
-  const img = ctx.createImageData(W, H);
-  const d = img.data;
-
-  // Parse bg color to r,g,b once
-  let bgR = 28, bgG = 26, bgB = 24; // dark mode fallback
+  let bgR = 28, bgG = 26, bgB = 24;
   const m = bgColor.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
   if (m) { bgR = parseInt(m[1],16); bgG = parseInt(m[2],16); bgB = parseInt(m[3],16); }
 
+  if (_mistKeyboardMode) {
+    // ── Keyboard mode: full-width horizontal strip reveal ────────────
+    // The active row is fully revealed across the entire width.
+    // Above and below fade into mist with turbulence-distorted edges.
+    const stripHH = MIST.HH * 2.5; // vertical half-height of the clear strip
+    const mistBand = MIST.THICKNESS * 1.2;
+
+    const img = ctx.createImageData(W, H);
+    const d = img.data;
+
+    for (let y = 0; y < H; y++) {
+      const dy = Math.abs(y - py);
+      let alpha;
+      if (dy < stripHH * 0.7) {
+        alpha = 0; // fully clear
+      } else if (dy > stripHH + mistBand) {
+        alpha = 255; // fully opaque
+      } else {
+        const te = Math.max(0, Math.min(1, (dy - stripHH * 0.7) / (mistBand + stripHH * 0.3)));
+        const nx = y * 0.012 + t * 0.5;
+        const noise = _fbm(nx, t * 0.3) * 0.65 + _fbm(nx + 2.1, t * 0.25) * 0.35;
+        const distorted = te + noise * 0.35 * (1 - te * 0.5);
+        const cl = Math.max(0, Math.min(1, distorted));
+        alpha = Math.round(cl * cl * (3 - 2 * cl) * 255);
+      }
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        d[i] = bgR; d[i+1] = bgG; d[i+2] = bgB; d[i+3] = alpha;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+
+    // Gold glow at the strip edges
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    const topGlow = ctx.createLinearGradient(0, py - stripHH - mistBand, 0, py - stripHH * 0.5);
+    topGlow.addColorStop(0, 'rgba(0,0,0,0)');
+    topGlow.addColorStop(0.5, `hsla(${hue},${sat}%,45%,0.15)`);
+    topGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = topGlow;
+    ctx.fillRect(0, 0, W, H);
+    const botGlow = ctx.createLinearGradient(0, py + stripHH * 0.5, 0, py + stripHH + mistBand);
+    botGlow.addColorStop(0, 'rgba(0,0,0,0)');
+    botGlow.addColorStop(0.5, `hsla(${hue},${sat}%,45%,0.15)`);
+    botGlow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = botGlow;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+
+    // Clear gold masks on text elements (full width — no mask needed)
+    viewerEl.querySelectorAll('.cipher-obscured-row.active .cipher-obscured-row-gold').forEach(el => {
+      el.style.webkitMaskImage = '';
+      el.style.maskImage = '';
+    });
+    return;
+  }
+
+  // ── Normal mode: ellipse reveal ──────────────────────────────────────
+  const img = ctx.createImageData(W, H);
+  const d = img.data;
+
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      // Normalized ellipse distance
       const dx = (x - px) / HW;
       const dy = (y - py) / HH;
       const dist = Math.sqrt(dx*dx + dy*dy);
 
-      // Sample turbulence at the boundary ring only (skip if clearly inside/outside)
       let alpha;
       if (dist < 0.6) {
-        alpha = 0; // definitely inside — fully transparent (text shows)
+        alpha = 0;
       } else if (dist > 2.2) {
-        alpha = 255; // definitely outside — fully opaque (bg color)
+        alpha = 255;
       } else {
-        // Mist ring: turbulence-distorted gradient
         const nx = x * 0.011 + t * 0.6;
         const ny = y * 0.011 + t * 0.35;
         const noise = _fbm(nx, ny) * 0.65 + _fbm(nx + 3.7, ny + 1.9) * 0.35;
-        // Distort the effective distance outward at the boundary
         const distorted = dist + noise * 0.45 * Math.max(0, 1.0 - Math.abs(dist - 1.2));
         const t_edge = Math.max(0, Math.min(1, (distorted - 0.9) / 1.1));
         const smooth = t_edge * t_edge * (3 - 2 * t_edge);
@@ -3401,7 +3450,7 @@ function _mistDraw() {
   }
   ctx.putImageData(img, 0, 0);
 
-  // Gold glow ring — ellipse-scaled to match the hole boundary
+  // Gold glow ring
   ctx.save();
   ctx.globalCompositeOperation = 'source-over';
   ctx.translate(px, py);
@@ -3814,16 +3863,18 @@ function stopTouchEdgeAutoScroll() {
 function enterCipherKeyboardMode() {
   const id = App.activeNoteId;
   if (!id || isIlluminated(id)) return;
-  if (window.innerWidth < 860) return; // desktop-only — see the click listener's comment for why
+  if (window.innerWidth < 860) return;
   App._cipherKeyboardMode = true;
+  _mistKeyboardMode = true;
   document.getElementById('cipher-obscured-viewer')?.classList.add('keyboard-mode');
-  cipherViewerActiveRowIndex = -1; // force activateRow to actually run for row 0, even if it was already hover-active
+  cipherViewerActiveRowIndex = -1;
   navigateCipherKeyboardRow(id, 0);
   document.addEventListener('keydown', handleCipherKeyboardNav);
 }
 
 function exitCipherKeyboardMode() {
   App._cipherKeyboardMode = false;
+  _mistKeyboardMode = false;
   document.getElementById('cipher-obscured-viewer')?.classList.remove('keyboard-mode');
   document.removeEventListener('keydown', handleCipherKeyboardNav);
   const viewerEl = document.getElementById('cipher-obscured-viewer');
@@ -3849,6 +3900,8 @@ function navigateCipherKeyboardRow(id, newIndex) {
   if (prevIdx >= 0 && rows[prevIdx]) deactivateRow(rows[prevIdx]);
   rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
   activateRow(id, rows[clamped], clamped, myToken);
+  if (rows[clamped - 1]) activateRow(id, rows[clamped - 1], clamped - 1, myToken);
+  if (rows[clamped + 1]) activateRow(id, rows[clamped + 1], clamped + 1, myToken);
   rows[clamped].scrollIntoView({ block: 'center' });
   // Position mist ellipse at center of the active row (viewport-relative for fixed canvas)
   const canvas = document.getElementById('cipher-mist-canvas');
