@@ -3898,6 +3898,8 @@ function navigateCipherKeyboardRow(id, newIndex) {
   const myToken = ++cipherViewerDecryptToken;
 
   if (prevIdx >= 0 && rows[prevIdx]) deactivateRow(rows[prevIdx]);
+  if (prevIdx > 0 && rows[prevIdx - 1]) deactivateRow(rows[prevIdx - 1]);
+  if (prevIdx >= 0 && rows[prevIdx + 1]) deactivateRow(rows[prevIdx + 1]);
   rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
   activateRow(id, rows[clamped], clamped, myToken);
   if (rows[clamped - 1]) activateRow(id, rows[clamped - 1], clamped - 1, myToken);
