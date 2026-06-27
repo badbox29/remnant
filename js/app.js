@@ -3361,10 +3361,11 @@ function _mistDraw() {
 
   if (_mistKeyboardMode) {
     // ── Keyboard mode: full-width horizontal strip reveal ────────────
-    // The active row is fully revealed across the entire width.
-    // Above and below fade into mist with turbulence-distorted edges.
-    const stripHH = 13; // px — exactly one line of text tall
+    const lh = lineHeightPx();
+    const stripHH = lh * 0.5;  // half a line = clear center half-height
     const mistBand = MIST.THICKNESS * 1.2;
+    const topRowY = py - lh;   // center of row above active
+    const botRowY = py + lh;   // center of row below active
 
     const img = ctx.createImageData(W, H);
     const d = img.data;
@@ -3372,12 +3373,12 @@ function _mistDraw() {
     for (let y = 0; y < H; y++) {
       const dy = Math.abs(y - py);
       let alpha;
-      if (dy < stripHH * 0.7) {
-        alpha = 0; // fully clear
+      if (dy < stripHH) {
+        alpha = 0;
       } else if (dy > stripHH + mistBand) {
-        alpha = 255; // fully opaque
+        alpha = 255;
       } else {
-        const te = Math.max(0, Math.min(1, (dy - stripHH * 0.7) / (mistBand + stripHH * 0.3)));
+        const te = Math.max(0, Math.min(1, (dy - stripHH) / mistBand));
         const nx = y * 0.012 + t * 0.5;
         const noise = _fbm(nx, t * 0.3) * 0.65 + _fbm(nx + 2.1, t * 0.25) * 0.35;
         const distorted = te + noise * 0.35 * (1 - te * 0.5);
@@ -3391,21 +3392,18 @@ function _mistDraw() {
     }
     ctx.putImageData(img, 0, 0);
 
-    // Gold glow at the strip edges
+    // Gold glow centered on the actual adjacent row positions
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    const topGlow = ctx.createLinearGradient(0, py - stripHH - mistBand, 0, py - stripHH * 0.5);
-    topGlow.addColorStop(0, 'rgba(0,0,0,0)');
-    topGlow.addColorStop(0.5, `hsla(${hue},${sat}%,45%,0.15)`);
-    topGlow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = topGlow;
-    ctx.fillRect(0, 0, W, H);
-    const botGlow = ctx.createLinearGradient(0, py + stripHH * 0.5, 0, py + stripHH + mistBand);
-    botGlow.addColorStop(0, 'rgba(0,0,0,0)');
-    botGlow.addColorStop(0.5, `hsla(${hue},${sat}%,45%,0.15)`);
-    botGlow.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = botGlow;
-    ctx.fillRect(0, 0, W, H);
+    const glowRadius = lh * 0.9;
+    [topRowY, botRowY].forEach(rowY => {
+      const g = ctx.createLinearGradient(0, rowY - glowRadius, 0, rowY + glowRadius);
+      g.addColorStop(0,   'rgba(0,0,0,0)');
+      g.addColorStop(0.5, `hsla(${hue},${sat}%,50%,0.22)`);
+      g.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+    });
     ctx.restore();
 
     // Clear gold masks on text elements (full width — no mask needed)
@@ -3897,16 +3895,22 @@ function navigateCipherKeyboardRow(id, newIndex) {
   cipherViewerActiveRowIndex = clamped;
   const myToken = ++cipherViewerDecryptToken;
 
-  // Clear any rows that are now two or more steps outside the window immediately
+  // Rows outside the 3-row window: fade out if just left, instant clear if further away
   rows.forEach((row, i) => {
     const inWindow = i === clamped || i === clamped - 1 || i === clamped + 1;
-    if (!inWindow) {
-      // Instantly clear — no lingering fade for rows leaving the window entirely
-      row.classList.remove('active', 'fading', 'kb-entering', 'adjacent');
-      const r = row.querySelector('.cipher-obscured-row-real');
-      const g = row.querySelector('.cipher-obscured-row-gold');
-      if (r) r.textContent = '';
-      if (g) g.textContent = '';
+    const wasAdjacent = i === prevIdx - 1 || i === prevIdx + 1 || i === prevIdx;
+    if (!inWindow && row.classList.contains('active')) {
+      if (wasAdjacent) {
+        // Just left the window — fade out
+        deactivateRow(row);
+      } else {
+        // Far outside — instant clear
+        row.classList.remove('active', 'fading', 'kb-entering', 'adjacent');
+        const r = row.querySelector('.cipher-obscured-row-real');
+        const g = row.querySelector('.cipher-obscured-row-gold');
+        if (r) r.textContent = '';
+        if (g) g.textContent = '';
+      }
     }
   });
 
