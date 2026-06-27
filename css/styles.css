@@ -1108,6 +1108,22 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
   transition: opacity 0.4s ease-out;
 }
 
+/* Newly entering a gold band — fade in */
+.cipher-obscured-row.kb-entering .cipher-obscured-row-real {
+  display: block;
+  opacity: 0;
+  animation: kb-fadein 0.4s ease-out forwards;
+}
+.cipher-obscured-row.kb-entering .cipher-obscured-row-gold {
+  opacity: 0;
+  animation: kb-fadein 0.4s ease-out forwards;
+}
+
+@keyframes kb-fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* Fading out — text dissolves back into mist */
 .cipher-obscured-row.fading .cipher-obscured-row-real {
   display: block;
