@@ -3526,6 +3526,8 @@ function syncObscuredViewerToPointer(id, clientY) {
 
   const toActivate = new Set([hoveredIdx]);
   if (hoveredIdx > 0) toActivate.add(hoveredIdx - 1);
+  if (hoveredIdx > 1) toActivate.add(hoveredIdx - 2);
+  if (hoveredIdx < rows.length - 1) toActivate.add(hoveredIdx + 1);
 
   const currentlyActive = new Set();
   rows.forEach((row, i) => { if (row.classList.contains('active')) currentlyActive.add(i); });
