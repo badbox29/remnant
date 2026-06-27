@@ -3897,9 +3897,22 @@ function navigateCipherKeyboardRow(id, newIndex) {
   cipherViewerActiveRowIndex = clamped;
   const myToken = ++cipherViewerDecryptToken;
 
-  if (prevIdx >= 0 && rows[prevIdx]) deactivateRow(rows[prevIdx]);
+  // Deactivate rows that are now outside the 3-row window
+  rows.forEach((row, i) => {
+    const inWindow = i === clamped || i === clamped - 1 || i === clamped + 1;
+    if (!inWindow && row.classList.contains('active')) deactivateRow(row);
+    if (!inWindow && row.classList.contains('fading')) {
+      row.classList.remove('fading');
+      const r = row.querySelector('.cipher-obscured-row-real');
+      const g = row.querySelector('.cipher-obscured-row-gold');
+      if (r) r.textContent = '';
+      if (g) g.textContent = '';
+    }
+  });
   rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
   activateRow(id, rows[clamped], clamped, myToken);
+  if (rows[clamped - 1]) activateRow(id, rows[clamped - 1], clamped - 1, myToken);
+  if (rows[clamped + 1]) activateRow(id, rows[clamped + 1], clamped + 1, myToken);
   rows[clamped].scrollIntoView({ block: 'center' });
   // Position mist ellipse at center of the active row (viewport-relative for fixed canvas)
   const canvas = document.getElementById('cipher-mist-canvas');
@@ -3907,7 +3920,7 @@ function navigateCipherKeyboardRow(id, newIndex) {
     const rowRect = rows[clamped].getBoundingClientRect();
     const viewerRect = viewerEl.getBoundingClientRect();
     _mistPx = viewerRect.width / 2;
-    _mistPy = rowRect.top - viewerRect.top;
+    _mistPy = rowRect.top - viewerRect.top + rowRect.height / 2;
   }
 }
 
