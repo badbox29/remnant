@@ -1112,12 +1112,12 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 .cipher-obscured-row.fading .cipher-obscured-row-real {
   display: block;
   opacity: 0;
-  transition: opacity 0.4s ease-out;
+  transition: opacity 0.6s ease-out;
 }
 
 .cipher-obscured-row.fading .cipher-obscured-row-gold {
   opacity: 0;
-  transition: opacity 0.4s ease-out;
+  transition: opacity 0.6s ease-out;
 }
 
 /* The mist canvas overlay — sits on top of the entire viewer,
