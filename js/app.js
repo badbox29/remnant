@@ -3877,10 +3877,10 @@ function exitCipherKeyboardMode() {
   document.removeEventListener('keydown', handleCipherKeyboardNav);
   const viewerEl = document.getElementById('cipher-obscured-viewer');
   const rows = viewerEl?.querySelectorAll('.cipher-obscured-row');
-  if (rows && cipherViewerActiveRowIndex >= 0 && rows[cipherViewerActiveRowIndex]) {
-    deactivateRow(rows[cipherViewerActiveRowIndex]);
-  }
-  rows?.forEach(r => r.classList.remove('adjacent'));
+  rows?.forEach(row => {
+    row.classList.remove('kb-center', 'kb-adjacent', 'kb-leaving', 'adjacent');
+    if (row.classList.contains('active')) deactivateRow(row);
+  });
   cipherViewerActiveRowIndex = -1;
 }
 
@@ -3895,43 +3895,67 @@ function navigateCipherKeyboardRow(id, newIndex) {
   cipherViewerActiveRowIndex = clamped;
   const myToken = ++cipherViewerDecryptToken;
 
-  // Rows outside the 3-row window: fade out if just left, instant clear if further away
+  const KB_CLASSES = ['kb-center', 'kb-adjacent', 'kb-leaving'];
+
+  function setKbClass(row, cls) {
+    row.classList.remove(...KB_CLASSES);
+    if (cls) row.classList.add(cls);
+  }
+
+  // Transition existing rows:
+  // - Previous center → kb-adjacent (50%)
+  // - Previous adjacent that's now outside window → kb-leaving (0%) then clear
+  // - Previous adjacent that's still in window → stays, gets re-classified below
   rows.forEach((row, i) => {
-    const inWindow = i === clamped || i === clamped - 1 || i === clamped + 1;
-    const wasAdjacent = i === prevIdx - 1 || i === prevIdx + 1 || i === prevIdx;
-    if (!inWindow && row.classList.contains('active')) {
-      if (wasAdjacent) {
-        // Just left the window — fade out
-        deactivateRow(row);
-      } else {
-        // Far outside — instant clear
-        row.classList.remove('active', 'fading', 'kb-entering', 'adjacent');
-        const r = row.querySelector('.cipher-obscured-row-real');
-        const g = row.querySelector('.cipher-obscured-row-gold');
-        if (r) r.textContent = '';
-        if (g) g.textContent = '';
-      }
+    const wasCenter   = i === prevIdx;
+    const wasAdjacent = i === prevIdx - 1 || i === prevIdx + 1;
+    const inWindow    = i === clamped || i === clamped - 1 || i === clamped + 1;
+
+    if (wasCenter && inWindow) {
+      setKbClass(row, 'kb-adjacent'); // moving to gold band
+    } else if ((wasCenter || wasAdjacent) && !inWindow) {
+      setKbClass(row, 'kb-leaving');
+      setTimeout(() => {
+        if (row.classList.contains('kb-leaving')) {
+          row.classList.remove('kb-leaving', 'active', 'adjacent');
+          const r = row.querySelector('.cipher-obscured-row-real');
+          const g = row.querySelector('.cipher-obscured-row-gold');
+          if (r) r.textContent = '';
+          if (g) g.textContent = '';
+        }
+      }, 350);
     }
   });
 
-  // Activate center row (snap to full opacity — no fade)
-  rows[clamped].classList.remove('kb-entering', 'fading');
-  activateRow(id, rows[clamped], clamped, myToken);
+  // Activate new center row
+  rows[clamped].classList.remove(...KB_CLASSES);
+  activateRow(id, rows[clamped], clamped, myToken).then?.(() => {
+    if (cipherViewerActiveRowIndex === clamped) setKbClass(rows[clamped], 'kb-center');
+  });
+  // Set immediately since activateRow may be fast
+  setKbClass(rows[clamped], 'kb-center');
 
-  // Activate adjacent rows with fade-in if they're newly entering the window
+  // Activate adjacent rows — fade in from 0 if newly entering
   [clamped - 1, clamped + 1].forEach(i => {
     if (!rows[i]) return;
-    const wasInWindow = i === prevIdx || i === prevIdx - 1 || i === prevIdx + 1;
-    rows[i].classList.toggle('adjacent', true);
+    const wasInWindow = prevIdx >= 0 && (i === prevIdx || i === prevIdx - 1 || i === prevIdx + 1);
+    rows[i].classList.add('adjacent');
     if (!wasInWindow) {
-      // Newly entering — fade in
-      rows[i].classList.add('kb-entering');
+      // Entering window fresh — start at 0 opacity, transition to 50%
+      rows[i].classList.remove(...KB_CLASSES);
+      // Force opacity 0 first, then transition to kb-adjacent
+      const r = rows[i].querySelector('.cipher-obscured-row-real');
+      const g = rows[i].querySelector('.cipher-obscured-row-gold');
+      if (r) { r.style.opacity = '0'; r.style.transition = 'none'; }
+      if (g) { g.style.opacity = '0'; g.style.transition = 'none'; }
       activateRow(id, rows[i], i, myToken);
-      // Remove entering class after transition completes
-      setTimeout(() => rows[i]?.classList.remove('kb-entering'), 400);
+      requestAnimationFrame(() => {
+        if (r) { r.style.opacity = ''; r.style.transition = ''; }
+        if (g) { g.style.opacity = ''; g.style.transition = ''; }
+        setKbClass(rows[i], 'kb-adjacent');
+      });
     } else {
-      // Already in window — just activate, no fade needed
-      rows[i].classList.remove('kb-entering', 'fading');
+      setKbClass(rows[i], 'kb-adjacent');
       activateRow(id, rows[i], i, myToken);
     }
   });
