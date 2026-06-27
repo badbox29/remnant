@@ -1104,6 +1104,20 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 /* When a row is active (decrypted), make its text available. */
 .cipher-obscured-row.active .cipher-obscured-row-real {
   display: block;
+  opacity: 1;
+  transition: opacity 0.4s ease-out;
+}
+
+/* Fading out — text dissolves back into mist */
+.cipher-obscured-row.fading .cipher-obscured-row-real {
+  display: block;
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
+}
+
+.cipher-obscured-row.fading .cipher-obscured-row-gold {
+  opacity: 0;
+  transition: opacity 0.4s ease-out;
 }
 
 /* The mist canvas overlay — sits on top of the entire viewer,
