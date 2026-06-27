@@ -3363,7 +3363,7 @@ function _mistDraw() {
     // ── Keyboard mode: full-width horizontal strip reveal ────────────
     // The active row is fully revealed across the entire width.
     // Above and below fade into mist with turbulence-distorted edges.
-    const stripHH = MIST.HH * 1.2; // vertical half-height of the clear strip
+    const stripHH = MIST.HH * 0.7; // vertical half-height of the clear strip
     const mistBand = MIST.THICKNESS * 1.2;
 
     const img = ctx.createImageData(W, H);
