@@ -3897,24 +3897,43 @@ function navigateCipherKeyboardRow(id, newIndex) {
   cipherViewerActiveRowIndex = clamped;
   const myToken = ++cipherViewerDecryptToken;
 
-  // Deactivate rows that are now outside the 3-row window
+  // Clear any rows that are now two or more steps outside the window immediately
   rows.forEach((row, i) => {
     const inWindow = i === clamped || i === clamped - 1 || i === clamped + 1;
-    if (!inWindow && row.classList.contains('active')) deactivateRow(row);
-    if (!inWindow && row.classList.contains('fading')) {
-      row.classList.remove('fading');
+    if (!inWindow) {
+      // Instantly clear — no lingering fade for rows leaving the window entirely
+      row.classList.remove('active', 'fading', 'kb-entering', 'adjacent');
       const r = row.querySelector('.cipher-obscured-row-real');
       const g = row.querySelector('.cipher-obscured-row-gold');
       if (r) r.textContent = '';
       if (g) g.textContent = '';
     }
   });
-  rows.forEach((row, i) => row.classList.toggle('adjacent', i === clamped - 1 || i === clamped + 1));
+
+  // Activate center row (snap to full opacity — no fade)
+  rows[clamped].classList.remove('kb-entering', 'fading');
   activateRow(id, rows[clamped], clamped, myToken);
-  if (rows[clamped - 1]) activateRow(id, rows[clamped - 1], clamped - 1, myToken);
-  if (rows[clamped + 1]) activateRow(id, rows[clamped + 1], clamped + 1, myToken);
+
+  // Activate adjacent rows with fade-in if they're newly entering the window
+  [clamped - 1, clamped + 1].forEach(i => {
+    if (!rows[i]) return;
+    const wasInWindow = i === prevIdx || i === prevIdx - 1 || i === prevIdx + 1;
+    rows[i].classList.toggle('adjacent', true);
+    if (!wasInWindow) {
+      // Newly entering — fade in
+      rows[i].classList.add('kb-entering');
+      activateRow(id, rows[i], i, myToken);
+      // Remove entering class after transition completes
+      setTimeout(() => rows[i]?.classList.remove('kb-entering'), 400);
+    } else {
+      // Already in window — just activate, no fade needed
+      rows[i].classList.remove('kb-entering', 'fading');
+      activateRow(id, rows[i], i, myToken);
+    }
+  });
+
   rows[clamped].scrollIntoView({ block: 'center' });
-  // Position mist ellipse at center of the active row (viewport-relative for fixed canvas)
+
   const canvas = document.getElementById('cipher-mist-canvas');
   if (viewerEl && canvas) {
     const rowRect = rows[clamped].getBoundingClientRect();
