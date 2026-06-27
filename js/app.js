@@ -3682,7 +3682,7 @@ function attachCipherObscuredViewerTracking() {
       const y = e.touches[0].clientY;
       lastTouchY = y;
       App._lastPointerX = x;
-      queueSync(y);
+      queueSync(y - TOUCH_REVEAL_OFFSET_PX);
     }, { passive: true });
 
     touchLayer.addEventListener('touchmove', (e) => {
@@ -3699,13 +3699,11 @@ function attachCipherObscuredViewerTracking() {
       const distFromBottom = rect.bottom - y;
 
       if (distFromBottom < zoneSize || distFromTop < zoneSize) {
-        // Edge zone — scroll AND move mist
         updateTouchEdgeAutoScroll(viewerEl, y);
-        queueSync(y);
+        queueSync(y - TOUCH_REVEAL_OFFSET_PX);
       } else {
-        // Middle zone — move mist, stop any edge scroll
         stopTouchEdgeAutoScroll();
-        queueSync(y);
+        queueSync(y - TOUCH_REVEAL_OFFSET_PX);
       }
     }, { passive: false });
 
