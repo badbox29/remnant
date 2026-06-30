@@ -207,6 +207,21 @@ function updateSyncIndicator() {
   el.style.display = (App.data?.pendingSync && getWorkerUrl()) ? '' : 'none';
 }
 
+// reportPersist(ok, msg) — surface a failed IndexedDB write to the user.
+// Debounced autosave loops call this on every save, so toast at most once per
+// failure streak and clear the streak on the next success, rather than
+// spamming a toast on every keystroke while storage is unhealthy. Returns the
+// boolean so callers can also branch on it.
+let _persistFailing = false;
+function reportPersist(ok, msg) {
+  if (ok) { _persistFailing = false; return true; }
+  if (!_persistFailing) {
+    _persistFailing = true;
+    showToast(msg || "Couldn't save your last change — your browser may be blocking storage. Copy anything important elsewhere and reload.");
+  }
+  return false;
+}
+
 // ─── Worker sync ──────────────────────────────────────────────────
 
 function getWorkerUrl() {
@@ -791,7 +806,8 @@ async function saveActiveNote() {
   note.title     = document.getElementById('note-title-input').value;
   note.content   = getBodyText();
   note.updatedAt = Date.now();
-  await NotesStore.set(id, note);
+  const ok = await NotesStore.set(id, note);
+  reportPersist(ok); // autosave loop — toast at most once per failure streak
   if (App.noteSummaries[id]) {
     App.noteSummaries[id].title     = note.title;
     App.noteSummaries[id].updatedAt = note.updatedAt;
@@ -877,7 +893,8 @@ async function submitCipherCreate() {
       id, chapterId, title: '', type: 'cipher', encrypted: record,
       order, createdAt: Date.now(), updatedAt: Date.now(),
     };
-    await NotesStore.set(id, note);
+    const ok = await NotesStore.set(id, note);
+    if (!ok) throw new Error('PERSIST_FAILED'); // set() no longer throws on a write failure — turn the false return back into the catch below
   } catch (e) {
     console.error('[Remnant] Cipher creation failed:', e);
     statusEl.style.color = 'var(--red)';
@@ -1091,7 +1108,8 @@ async function saveActiveCipher() {
   note.title     = newTitle;
   note.encrypted = await Cipher.encryptLinesWithKey(unlocked.key, newLines, saltBytes, note.encrypted.kdfParams);
   note.updatedAt = Date.now();
-  await NotesStore.set(id, note);
+  const ok = await NotesStore.set(id, note);
+  reportPersist(ok, "Couldn't save this Cipher — your last change may not have been saved. Reload before relying on it.");
 
   if (App.noteSummaries[id]) {
     App.noteSummaries[id].title     = newTitle;
@@ -1440,7 +1458,8 @@ document.getElementById('dust-deletion-log-link')?.addEventListener('click', () 
 });
 
 async function salvageFragmentAndRefresh(id) {
-  await NotesStore.salvageFragment(id);
+  const ok = await NotesStore.salvageFragment(id);
+  if (!ok) { reportPersist(false, "Couldn't salvage that Fragment — try again."); return; }
   const refreshed = await NotesStore.get(id);
   if (refreshed) {
     App.fragmentSummaries[id] = {
@@ -1501,7 +1520,8 @@ function scheduleSaveScratchpad() {
   clearTimeout(saveScratchpadTimer);
   saveScratchpadTimer = setTimeout(async () => {
     const content = document.getElementById('scratchpad-input').value;
-    await NotesStore.setScratchpad(content);
+    const ok = await NotesStore.setScratchpad(content);
+    reportPersist(ok);
     markDirty();
   }, 400);
 }
@@ -1602,10 +1622,15 @@ document.getElementById('scratchpad-context-create-fragment')?.addEventListener(
   // rather than leaving an invisible-but-present remainder.
   if (!newValue.trim()) newValue = '';
 
-  scratchpadInput.value = newValue;
-  await NotesStore.setScratchpad(scratchpadInput.value);
+  // Create the Fragment FIRST and only remove the text from the scratchpad if
+  // that write actually persisted — otherwise a failed write would delete the
+  // cut text from the scratchpad without it surviving anywhere.
+  const made = await createFragmentFromText(selectedText);
+  if (!made) return; // createFragmentFromText already toasted; leave the scratchpad untouched
 
-  await createFragmentFromText(selectedText);
+  scratchpadInput.value = newValue;
+  const padOk = await NotesStore.setScratchpad(scratchpadInput.value);
+  reportPersist(padOk);
 });
 
 // createFragmentFromText(content) — like createFragmentAndOpen, but for
@@ -1613,6 +1638,7 @@ document.getElementById('scratchpad-context-create-fragment')?.addEventListener(
 // than starting blank.
 async function createFragmentFromText(content) {
   const fragment = await NotesStore.createFragment(content);
+  if (!fragment) { showToast("Couldn't create Fragment — nothing was saved. Try again."); return false; }
   App.fragmentSummaries[fragment.id] = {
     id: fragment.id, content: fragment.content, status: null,
     lastInteractedAt: fragment.lastInteractedAt, updatedAt: fragment.updatedAt,
@@ -1623,6 +1649,7 @@ async function createFragmentFromText(content) {
   renderTabs();
   renderNavTree();
   showToast('Created as Fragment');
+  return true;
 }
 
 // ─── Books & Chapters: data operations ─────────────────────────────
@@ -2039,6 +2066,7 @@ async function loadFragmentData() {
 
 async function createFragmentAndOpen() {
   const fragment = await NotesStore.createFragment('');
+  if (!fragment) { showToast("Couldn't create Fragment — nothing was saved. Try again."); return; }
   App.fragmentSummaries[fragment.id] = {
     id: fragment.id, content: '', status: null,
     lastInteractedAt: fragment.lastInteractedAt, updatedAt: fragment.updatedAt,
@@ -2118,7 +2146,8 @@ async function saveActiveFragment() {
   const fragment = await NotesStore.get(id);
   if (!fragment || fragment.type !== 'fragment') return;
   fragment.content = getBodyText();
-  await NotesStore.set(id, fragment); // updatedAt bump happens in touchFragment below
+  const ok = await NotesStore.set(id, fragment); // updatedAt bump happens in touchFragment below
+  reportPersist(ok);
   await NotesStore.touchFragment(id); // resets lastInteractedAt — this IS the decay-clock reset
   const refreshed = await NotesStore.get(id);
   App.fragmentSummaries[id] = {
@@ -2767,7 +2796,7 @@ function confirmAndMergeFragments(mergedId, survivorId) {
 
 async function mergeFragmentsAndRefresh(mergedId, survivorId) {
   const result = await NotesStore.mergeFragments(survivorId, mergedId);
-  if (!result) return;
+  if (!result) { showToast("Couldn't merge fragments — nothing changed. Try again."); return; }
   delete App.fragmentSummaries[mergedId];
   App.fragmentSummaries[survivorId] = {
     id: survivorId, content: result.content || '', status: result.status || null,
@@ -2810,7 +2839,13 @@ async function promoteFragmentToRemnant(id) {
     createdAt: fragment.createdAt || Date.now(),
     updatedAt: Date.now(),
   };
-  await NotesStore.set(id, promoted); // overwrites the Fragment record — type/status/lastInteractedAt are gone, replaced wholesale
+  const ok = await NotesStore.set(id, promoted); // overwrites the Fragment record — type/status/lastInteractedAt are gone, replaced wholesale
+  if (!ok) {
+    // Write didn't land — leave the Fragment exactly as it was rather than
+    // tearing down its summary/tab for a promotion that never persisted.
+    showToast("Couldn't promote Fragment — nothing changed. Try again.");
+    return;
+  }
 
   delete App.fragmentSummaries[id];
   if (App.openFragmentIds.includes(id)) {
@@ -4652,6 +4687,7 @@ async function runImport() {
     let cipherImportedAsRemnantCount = 0;
     let remnantCount = 0;
     let fragmentCount = 0;
+    let importFailures = 0; // items whose IndexedDB write didn't commit
     let firstCipherPrompt = true;
     let batchPassphrase = null; // mirrors Export's own batch/one-off/resume shape, applied here to IMPORT's per-Cipher passphrase prompts
 
@@ -4659,8 +4695,8 @@ async function runImport() {
 
     for (const item of filesByLocation) {
       if (item.isLoose === 'fragments') {
-        await NotesStore.createFragment(item.content);
-        fragmentCount++;
+        const f = await NotesStore.createFragment(item.content);
+        if (f) fragmentCount++; else importFailures++;
         continue;
       }
 
@@ -4688,12 +4724,12 @@ async function runImport() {
         if (passphrase !== null) {
           const id = generateId('n');
           const record = await Cipher.createRecord(passphrase, item.content);
-          await NotesStore.set(id, {
+          const ok = await NotesStore.set(id, {
             id, chapterId, title: titleWithoutPrefix, type: 'cipher',
             encrypted: record.record, order: 0, createdAt: Date.now(), updatedAt: Date.now(),
           });
           if (useThisAsNewBatch) batchPassphrase = passphrase;
-          cipherImportedAsCipherCount++;
+          if (ok) cipherImportedAsCipherCount++; else importFailures++;
           continue;
         }
         // No passphrase entered (modal closed/skipped) — falls through
@@ -4707,11 +4743,12 @@ async function runImport() {
       // The filename (WITH its cipher- prefix intact, if present) IS
       // the title in this path, per spec.
       const id = generateId('n');
-      await NotesStore.set(id, {
+      const ok = await NotesStore.set(id, {
         id, chapterId, title: item.filenameNoExt, content: item.content,
         order: 0, createdAt: Date.now(), updatedAt: Date.now(),
       });
-      if (isCipherFile) cipherImportedAsRemnantCount++;
+      if (!ok) importFailures++;
+      else if (isCipherFile) cipherImportedAsRemnantCount++;
       else remnantCount++;
     }
 
@@ -4731,8 +4768,9 @@ async function runImport() {
     if (remnantCount) summaryParts.push(`${remnantCount} Remnant(s)`);
     if (fragmentCount) summaryParts.push(`${fragmentCount} Fragment(s)`);
     if (skippedCount) summaryParts.push(`${skippedCount} unrecognized entr${skippedCount === 1 ? 'y' : 'ies'} skipped`);
+    if (importFailures) summaryParts.push(`${importFailures} item(s) FAILED to save (storage error)`);
 
-    statusEl.style.color = 'var(--ink)';
+    statusEl.style.color = importFailures ? 'var(--red)' : 'var(--ink)';
     statusEl.textContent = summaryParts.length ? `Import complete: ${summaryParts.join(', ')}.` : 'Import complete — nothing recognized in this zip.';
   } catch (e) {
     console.error('[Import] failed:', e);

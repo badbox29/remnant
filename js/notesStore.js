@@ -193,6 +193,26 @@ const NotesStore = (() => {
     });
   }
 
+  // deleteRecord(storeName, key) — the delete-side twin of writeRecord:
+  // resolves true only after the transaction durably commits, false on a
+  // closed connection or an aborted/errored transaction. A delete that
+  // silently fails is how a removed item reappears on the next reload.
+  async function deleteRecord(storeName, key) {
+    let db;
+    try { db = await openDB(); }
+    catch (e) { console.warn('[NotesStore] openDB failed:', e); return false; }
+    return new Promise((resolve) => {
+      let tx;
+      try { tx = db.transaction(storeName, 'readwrite'); }
+      catch (e) { console.warn('[NotesStore] transaction failed:', e); return resolve(false); }
+      tx.oncomplete = () => resolve(true);
+      tx.onabort    = () => { console.warn('[NotesStore] transaction aborted:', tx.error); resolve(false); };
+      tx.onerror    = () => { console.warn('[NotesStore] transaction error:', tx.error); resolve(false); };
+      try { tx.objectStore(storeName).delete(key); }
+      catch (e) { console.warn('[NotesStore] delete failed:', e); resolve(false); }
+    });
+  }
+
   // ── Individual notes ──────────────────────────────────────────────
   // chapterId defaults to null (unfiled) for any note read before the
   // Books/Chapters feature existed — a one-time shape migration applied
@@ -214,8 +234,7 @@ const NotesStore = (() => {
   }
 
   async function del(id) {
-    try { await wrap((await store(NOTES_STORE, 'readwrite')).delete(id)); }
-    catch { /* ignore */ }
+    return deleteRecord(NOTES_STORE, id);
   }
 
   // ── Bulk note operations (sync with worker) ────────────────────────
@@ -279,8 +298,7 @@ const NotesStore = (() => {
   }
 
   async function deleteBook(id) {
-    try { await wrap((await store(STRUCTURE_STORE, 'readwrite')).delete(BOOK_PREFIX + id)); }
-    catch { /* ignore */ }
+    return deleteRecord(STRUCTURE_STORE, BOOK_PREFIX + id);
   }
 
   async function getChapter(id) {
@@ -294,8 +312,7 @@ const NotesStore = (() => {
   }
 
   async function deleteChapter(id) {
-    try { await wrap((await store(STRUCTURE_STORE, 'readwrite')).delete(CHAPTER_PREFIX + id)); }
-    catch { /* ignore */ }
+    return deleteRecord(STRUCTURE_STORE, CHAPTER_PREFIX + id);
   }
 
   // Internal: read every record in STRUCTURE_STORE once, split by prefix.
@@ -367,8 +384,8 @@ const NotesStore = (() => {
       createdAt: now,
       updatedAt: now,
     };
-    await set(fragment.id, fragment);
-    return fragment;
+    const ok = await set(fragment.id, fragment);
+    return ok ? fragment : null; // null signals the write didn't persist — callers must not render a Fragment that wasn't saved
   }
 
   // getAllFragments() — every type:'fragment' record, live AND dusted.
@@ -389,10 +406,10 @@ const NotesStore = (() => {
   // Fragment must NEVER call this.
   async function touchFragment(id) {
     const fragment = await get(id);
-    if (!fragment || fragment.type !== 'fragment') return;
+    if (!fragment || fragment.type !== 'fragment') return false;
     fragment.lastInteractedAt = Date.now();
     fragment.updatedAt = fragment.lastInteractedAt;
-    await set(id, fragment);
+    return set(id, fragment);
   }
 
   // getFragmentStage(fragment) — pure function, no I/O, safe to call from
@@ -430,7 +447,11 @@ const NotesStore = (() => {
     const provenance = `— merged fragment, ${new Date().toLocaleString()} —`;
     survivor.content = `${survivor.content}\n\n${provenance}\n${merged.content}`;
     survivor.updatedAt = Date.now();
-    await set(survivorId, survivor);
+    // Persist the combined survivor BEFORE deleting the source. If this write
+    // failed and we'd deleted first, the merged-in content would be gone with
+    // the survivor never updated — silent data loss. Abort instead.
+    const survOk = await set(survivorId, survivor);
+    if (!survOk) return null;
     await del(mergedId);
     await touchFragment(survivorId); // resets lastInteractedAt to now, full 28-day clock
     return await get(survivorId);
@@ -442,9 +463,9 @@ const NotesStore = (() => {
   // so the original decay timestamp must survive the transition.
   async function moveFragmentToDust(id) {
     const fragment = await get(id);
-    if (!fragment || fragment.type !== 'fragment') return;
+    if (!fragment || fragment.type !== 'fragment') return false;
     fragment.status = 'dust';
-    await set(id, fragment);
+    return set(id, fragment);
   }
 
   // salvageFragment(id) — the ONLY sanctioned exit from Dust. Clears
@@ -452,11 +473,13 @@ const NotesStore = (() => {
   // a full fresh 28-day lifespan, not a partial restore.
   async function salvageFragment(id) {
     const fragment = await get(id);
-    if (!fragment || fragment.type !== 'fragment' || fragment.status !== 'dust') return;
+    // Nothing to salvage (gone, wrong type, or not actually dusted) is a
+    // no-op, not a failure — return true so callers don't surface an error.
+    if (!fragment || fragment.type !== 'fragment' || fragment.status !== 'dust') return true;
     delete fragment.status;
     fragment.lastInteractedAt = Date.now();
     fragment.updatedAt = fragment.lastInteractedAt;
-    await set(id, fragment);
+    return set(id, fragment);
   }
 
   // _logDeletion(content) — records a short content preview + timestamp
@@ -533,10 +556,7 @@ const NotesStore = (() => {
   }
 
   async function setScratchpad(content) {
-    try {
-      const record = { content: content || '', updatedAt: Date.now() };
-      await wrap((await store(SCRATCHPAD_STORE, 'readwrite')).put(record, SCRATCHPAD_KEY));
-    } catch (e) { console.warn('[NotesStore] setScratchpad failed:', e); }
+    return writeRecord(SCRATCHPAD_STORE, { content: content || '', updatedAt: Date.now() }, SCRATCHPAD_KEY);
   }
 
   // ── Reset (guest switch-account, etc.) ────────────────────────────
