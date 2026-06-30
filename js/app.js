@@ -1648,11 +1648,31 @@ async function createChapter(bookId, name) {
     noteIds: [], order: nextOrder(existingChapters),
     createdAt: Date.now(), updatedAt: Date.now(),
   };
-  await NotesStore.setChapter(id, chapter);
+
+  // Persist BOTH records before touching in-memory state or the UI, so a
+  // failed write can never render as a saved Scroll (the bug that silently
+  // ate a Scroll + its Remnants). Write the chapter first; only if that
+  // commits do we write the updated parent book.
+  const chapterOk = await NotesStore.setChapter(id, chapter);
+  if (!chapterOk) {
+    showToast("Couldn't save Scroll — nothing was saved. Try again.");
+    return null;
+  }
+
+  // Don't mutate the live book object until its write is confirmed.
+  const updatedBook = { ...book, chapterIds: [...book.chapterIds, id], updatedAt: Date.now() };
+  const bookOk = await NotesStore.setBook(bookId, updatedBook);
+  if (!bookOk) {
+    // Chapter committed but the parent link didn't — roll back the orphan so
+    // we don't leave a Scroll no Corpus references.
+    await NotesStore.deleteChapter(id);
+    showToast("Couldn't save Scroll — nothing was saved. Try again.");
+    return null;
+  }
+
+  // Both writes durably committed — now it's safe to update memory and render.
   App.chapters[id] = chapter;
-  book.chapterIds.push(id);
-  book.updatedAt = Date.now();
-  await NotesStore.setBook(bookId, book);
+  App.books[bookId] = updatedBook;
   setChapterExpanded(id, true);
   markDirty();
   renderNavTree();

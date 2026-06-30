@@ -162,6 +162,37 @@ const NotesStore = (() => {
     });
   }
 
+  // writeRecord(storeName, value, key) — like wrap(), but for writes, and it
+  // tells the truth. Resolves true ONLY after the transaction durably commits
+  // (tx.oncomplete); resolves false on a closed connection (transaction()
+  // throws), a failed put, or an aborted/errored transaction. This is the
+  // signal the create paths need: a silently dropped write is how an unsaved
+  // Scroll renders as if it were saved.
+  async function writeRecord(storeName, value, key) {
+    let db;
+    try { db = await openDB(); }
+    catch (e) { console.warn('[NotesStore] openDB failed:', e); return false; }
+    return new Promise((resolve) => {
+      let tx;
+      try {
+        tx = db.transaction(storeName, 'readwrite');
+      } catch (e) {
+        // InvalidStateError if the cached connection was closed out from under us.
+        console.warn('[NotesStore] transaction failed:', e);
+        return resolve(false);
+      }
+      tx.oncomplete = () => resolve(true);
+      tx.onabort    = () => { console.warn('[NotesStore] transaction aborted:', tx.error); resolve(false); };
+      tx.onerror    = () => { console.warn('[NotesStore] transaction error:', tx.error); resolve(false); };
+      try {
+        tx.objectStore(storeName).put(value, key);
+      } catch (e) {
+        console.warn('[NotesStore] put failed:', e); // tx.oncomplete won't fire — the put never issued
+        resolve(false);
+      }
+    });
+  }
+
   // ── Individual notes ──────────────────────────────────────────────
   // chapterId defaults to null (unfiled) for any note read before the
   // Books/Chapters feature existed — a one-time shape migration applied
@@ -178,9 +209,8 @@ const NotesStore = (() => {
   }
 
   async function set(id, note) {
-    if (!id || !note) return;
-    try { await wrap((await store(NOTES_STORE, 'readwrite')).put(note, id)); }
-    catch (e) { console.warn('[NotesStore] set failed:', e); }
+    if (!id || !note) return false;
+    return writeRecord(NOTES_STORE, note, id);
   }
 
   async function del(id) {
@@ -244,9 +274,8 @@ const NotesStore = (() => {
   }
 
   async function setBook(id, book) {
-    if (!id || !book) return;
-    try { await wrap((await store(STRUCTURE_STORE, 'readwrite')).put(book, BOOK_PREFIX + id)); }
-    catch (e) { console.warn('[NotesStore] setBook failed:', e); }
+    if (!id || !book) return false;
+    return writeRecord(STRUCTURE_STORE, book, BOOK_PREFIX + id);
   }
 
   async function deleteBook(id) {
@@ -260,9 +289,8 @@ const NotesStore = (() => {
   }
 
   async function setChapter(id, chapter) {
-    if (!id || !chapter) return;
-    try { await wrap((await store(STRUCTURE_STORE, 'readwrite')).put(chapter, CHAPTER_PREFIX + id)); }
-    catch (e) { console.warn('[NotesStore] setChapter failed:', e); }
+    if (!id || !chapter) return false;
+    return writeRecord(STRUCTURE_STORE, chapter, CHAPTER_PREFIX + id);
   }
 
   async function deleteChapter(id) {
