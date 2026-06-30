@@ -21,6 +21,10 @@
   --blue-text:   #2d5246;
   --badge-token-bg: #F0E6D2;
   --gold-vivid:  #D4A72C;
+  --sync-synced:  var(--green);      /* dot state colors — reference theme-aware tokens, so dark mode follows automatically */
+  --sync-pending: var(--gold-vivid);
+  --sync-syncing: var(--blue-text);
+  --sync-offline: var(--red);
   --shadow-ink:  43,40,35;
 
   /* Aliases referenced inline by auth.js (ported from Refectory, where
@@ -208,12 +212,83 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 .link-btn:hover { color: var(--brass-dark); text-decoration-color: var(--brass); }
 
+/* ── Sync indicator: a single dot whose color is its state, plus a hover
+   legend explaining each state. Colors come from theme-aware --sync-* tokens
+   so dark mode follows for free. Only the active "syncing" state animates. ── */
+.sync-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+  outline: none;
+}
 .sync-indicator {
-  color: var(--brass);
   font-size: .7rem;
-  animation: pulse 2s ease-in-out infinite;
+  color: var(--muted);
+  line-height: 1;
+  transition: color .25s ease;
+}
+.sync-wrap[data-state="synced"]  .sync-indicator { color: var(--sync-synced); }
+.sync-wrap[data-state="pending"] .sync-indicator { color: var(--sync-pending); }
+.sync-wrap[data-state="offline"] .sync-indicator { color: var(--sync-offline); }
+.sync-wrap[data-state="syncing"] .sync-indicator {
+  color: var(--sync-syncing);
+  animation: pulse 1.4s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+.sync-legend {
+  display: none;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 268px;
+  padding: .7rem .8rem;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 22px rgba(var(--shadow-ink), .18);
+  font-family: var(--font-body);
+  font-size: .76rem;
+  line-height: 1.4;
+  color: var(--ink);
+  cursor: default;
+}
+.sync-wrap:hover .sync-legend,
+.sync-wrap:focus .sync-legend,
+.sync-wrap:focus-within .sync-legend { display: block; }
+
+.sync-legend-title {
+  display: block;
+  font-family: var(--font-display);
+  font-size: .8rem;
+  color: var(--ink-soft);
+  margin-bottom: .5rem;
+  letter-spacing: .02em;
+}
+.sync-legend-row {
+  display: flex;
+  gap: .5rem;
+  align-items: flex-start;
+  padding: .3rem .35rem;
+  border-radius: var(--r-sm);
+}
+.sync-legend-text { color: var(--muted); }
+.sync-legend-text b { color: var(--ink); font-weight: 600; }
+.sync-swatch { font-size: .7rem; line-height: 1.4; flex: 0 0 auto; }
+.sync-swatch.s-synced  { color: var(--sync-synced); }
+.sync-swatch.s-pending { color: var(--sync-pending); }
+.sync-swatch.s-syncing { color: var(--sync-syncing); }
+.sync-swatch.s-offline { color: var(--sync-offline); }
+
+/* Highlight the row matching the current state. */
+.sync-wrap[data-state="synced"]  .sync-legend-row[data-for="synced"],
+.sync-wrap[data-state="pending"] .sync-legend-row[data-for="pending"],
+.sync-wrap[data-state="syncing"] .sync-legend-row[data-for="syncing"],
+.sync-wrap[data-state="offline"] .sync-legend-row[data-for="offline"] {
+  background: rgba(var(--shadow-ink), .06);
+}
 
 /* ── Buttons ─────────────────────────────────────────────────────── */
 
