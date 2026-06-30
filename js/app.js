@@ -248,13 +248,84 @@ async function assembleSyncPayload() {
   };
 }
 
+// reconcileById(serverObj, deviceObj) — per-record union merge by updatedAt.
+// Every record from either side is kept; when both sides hold the same id, the
+// newer updatedAt wins, ties going to the device's copy. The SAME helper backs
+// both the boot pull (merge server into local) and pull-before-push (merge
+// local into the server copy we're about to write), so the two paths can never
+// disagree about how a conflict resolves. Note: this is a union, so it does NOT
+// propagate deletes — a record absent on one side but present (and not newer)
+// on the other is kept. Delete propagation is a later stage (tombstones).
+function reconcileById(serverObj, deviceObj) {
+  const merged = { ...(serverObj || {}) };
+  for (const [id, deviceRec] of Object.entries(deviceObj || {})) {
+    const serverRec = merged[id];
+    if (!serverRec || (deviceRec.updatedAt || 0) >= (serverRec.updatedAt || 0)) {
+      merged[id] = deviceRec;
+    }
+  }
+  return merged;
+}
+
+// mergeSyncPayloads(server, local) — reconcile a full payload for WRITING back
+// to the server during pull-before-push. Record collections merge per-id;
+// scratchpad takes whichever side is newer (ties to local); top-level account/
+// session metadata is taken from local, since that's this device's own state.
+function mergeSyncPayloads(server, local) {
+  const s = server || {};
+  const localPad  = local.scratchpad  || { content: '', updatedAt: 0 };
+  const serverPad = s.scratchpad || { content: '', updatedAt: 0 };
+  const mergedPad = (serverPad.updatedAt || 0) > (localPad.updatedAt || 0) ? serverPad : localPad;
+  return {
+    ...local, // local account/session metadata wins
+    notes: reconcileById(s.notes, local.notes),
+    structure: {
+      books:    reconcileById(s.structure?.books,    local.structure?.books),
+      chapters: reconcileById(s.structure?.chapters, local.structure?.chapters),
+    },
+    scratchpad: mergedPad,
+  };
+}
+
 async function pushToWorker() {
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return false;
   const token = App.data?.userToken;
   if (!token) return false;
 
-  const payload = await assembleSyncPayload();
+  // Pull-merge-before-push: read the current server copy and reconcile our
+  // local state INTO it, so this write can never drop records another device
+  // wrote that we haven't seen. If we can't read the server copy first
+  // (offline, Worker unreachable, or a token migration in play), ABORT the
+  // push and stay dirty — a blind overwrite is exactly the clobber we're
+  // removing here. The change stays saved locally and goes up on the next
+  // successful sync.
+  let serverBlob;
+  try {
+    const getHeaders = await Auth._authHeaders('GET', token, '');
+    const getRes = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
+    if (getRes.status === 404) {
+      serverBlob = null; // first-ever push for this token — nothing to merge against
+    } else if (getRes.ok) {
+      if (getRes.headers.get('X-Token-Migrated')) {
+        // Token was migrated/forwarded on another device — let boot's
+        // pullFromWorker handle that properly rather than guessing here.
+        console.warn('[Remnant] pushToWorker: token migrated; aborting push, boot will reconcile');
+        return false;
+      }
+      const j = await getRes.json();
+      serverBlob = j.value ?? j;
+    } else {
+      console.warn(`[Remnant] pushToWorker: pre-push read failed (${getRes.status}); aborting push, staying dirty`);
+      return false;
+    }
+  } catch (e) {
+    console.warn('[Remnant] pushToWorker: pre-push read error; aborting push, staying dirty:', e);
+    return false;
+  }
+
+  const local   = await assembleSyncPayload();
+  const payload = serverBlob ? mergeSyncPayloads(serverBlob, local) : local;
   const body    = JSON.stringify(payload);
   const headers = await Auth._authHeaders('PUT', token, body);
   try {
@@ -4951,24 +5022,16 @@ async function boot() {
     if (remote) {
       const { notes: remoteNotes, structure: remoteStructure, scratchpad: remoteScratchpad, ...metadata } = remote;
 
-      const mergeByUpdatedAt = async (remoteObj, localObj) => {
-        const merged = { ...(remoteObj || {}) };
-        for (const [id, localRec] of Object.entries(localObj || {})) {
-          const remoteRec = merged[id];
-          if (!remoteRec || (localRec.updatedAt || 0) >= (remoteRec.updatedAt || 0)) {
-            merged[id] = localRec;
-          }
-        }
-        return merged;
-      };
-
       const [localNotes, localBooks, localChapters] = await Promise.all([
         NotesStore.getAll(), NotesStore.getAllBooks(), NotesStore.getAllChapters(),
       ]);
 
-      const mergedNotes    = await mergeByUpdatedAt(remoteNotes, localNotes);
-      const mergedBooks    = await mergeByUpdatedAt(remoteStructure?.books, localBooks);
-      const mergedChapters = await mergeByUpdatedAt(remoteStructure?.chapters, localChapters);
+      // Same reconcile used by pull-before-push — server is the "server" side,
+      // this device's IndexedDB is the "device" side; newest updatedAt wins,
+      // ties to the device.
+      const mergedNotes    = reconcileById(remoteNotes, localNotes);
+      const mergedBooks    = reconcileById(remoteStructure?.books, localBooks);
+      const mergedChapters = reconcileById(remoteStructure?.chapters, localChapters);
 
       App.data = mergeData(metadata);
       await Promise.all([
