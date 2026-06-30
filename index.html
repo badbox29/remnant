@@ -34,7 +34,16 @@
   <div class="topbar-actions">
     <button class="link-btn" id="terminology-link-btn" title="What do Corpus, Scroll, and Remnant mean?"><i class="mdi mdi-information-variant-circle-outline"></i><span class="btn-label">Terminology</span></button>
     <button class="btn btn-sm btn-ghost scratchpad-toggle-btn" id="scratchpad-toggle-btn" title="Scratchpad"><i class="mdi mdi-note-edit-outline"></i><span class="btn-label">Scratchpad</span></button>
-    <span id="sync-indicator" class="sync-indicator" style="display:none;" title="Unsynced changes">●</span>
+    <span id="sync-wrap" class="sync-wrap" tabindex="0" style="display:none;" aria-label="Sync status">
+      <span id="sync-indicator" class="sync-indicator" aria-hidden="true">●</span>
+      <span class="sync-legend" role="tooltip">
+        <span class="sync-legend-title">Sync status</span>
+        <span class="sync-legend-row" data-for="synced"><span class="sync-swatch s-synced">●</span><span class="sync-legend-text"><b>Synced</b> — every change is saved to the cloud and matches your other devices.</span></span>
+        <span class="sync-legend-row" data-for="pending"><span class="sync-swatch s-pending">●</span><span class="sync-legend-text"><b>Pending</b> — changes are saved on this device and waiting to sync up.</span></span>
+        <span class="sync-legend-row" data-for="syncing"><span class="sync-swatch s-syncing">●</span><span class="sync-legend-text"><b>Syncing</b> — talking to the cloud right now.</span></span>
+        <span class="sync-legend-row" data-for="offline"><span class="sync-swatch s-offline">●</span><span class="sync-legend-text"><b>Offline</b> — can’t reach the cloud. Your changes are safe here and will sync when it’s back.</span></span>
+      </span>
+    </span>
     <button class="btn btn-sm btn-outline" id="save-session-btn" style="display:none;">Save Session</button>
     <button class="btn btn-sm btn-ghost" id="open-settings-btn"><i class="mdi mdi-cog"></i><span class="btn-label">Settings</span></button>
     <button class="btn-icon theme-toggle-btn" id="theme-toggle-btn" title="Toggle dark mode"></button>
