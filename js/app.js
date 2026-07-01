@@ -358,7 +358,8 @@ function mergeSyncPayloads(server, local) {
   };
 }
 
-async function pushToWorker() {
+async function pushToWorker(attempt = 0) {
+  const PUSH_MAX_RETRIES = 3;
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return false;
   const token = App.data?.userToken;
@@ -399,6 +400,13 @@ async function pushToWorker() {
     return false;
   }
 
+  // Optimistic concurrency (Layer 3): the rev we just read is the version our
+  // merge is based on. The Worker rejects the write with 409 if the stored rev
+  // changed in the gap between this read and the write — i.e. another device
+  // pushed in between — and we re-pull/re-merge/retry against the new state so
+  // that device's change survives instead of being silently overwritten.
+  const baseRev = serverBlob ? (serverBlob._rev || 0) : 0;
+
   const local   = await assembleSyncPayload();
   const payload = serverBlob ? mergeSyncPayloads(serverBlob, local) : local;
   const body    = JSON.stringify(payload);
@@ -406,9 +414,20 @@ async function pushToWorker() {
   try {
     const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, {
       method:  'PUT',
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: { 'Content-Type': 'application/json', 'X-Rev': String(baseRev), ...headers },
       body,
     });
+    if (res.status === 409) {
+      // Someone else wrote between our read and this write. Re-pull, re-merge,
+      // retry a bounded number of times before backing off to the next cycle.
+      if (attempt < PUSH_MAX_RETRIES) {
+        console.warn(`[Remnant] pushToWorker: rev conflict (409); re-merging, retry ${attempt + 1}/${PUSH_MAX_RETRIES}`);
+        return pushToWorker(attempt + 1);
+      }
+      console.warn('[Remnant] pushToWorker: rev conflict persisted; staying dirty, will retry next cycle');
+      setSyncStatus('pending'); // data is safe locally; next sync tries again
+      return false;
+    }
     if (res.ok) {
       App.data.pendingSync  = false;
       App.data.lastSyncTime = Date.now();
