@@ -540,7 +540,7 @@ async function pushToWorker(attempt = 0) {
   }
 }
 
-async function pullFromWorker() {
+async function pullFromWorker({ recoverOnAuthFail = true } = {}) {
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return null;
   const token   = App.data?.userToken;
@@ -570,6 +570,15 @@ async function pullFromWorker() {
       ]);
       saveLocal();
       return remote;
+    }
+
+    // Mid-session credential expiry. Boot opts out (recoverOnAuthFail:false) —
+    // there, bootCheck owns reauth and drives it in the correct order; letting
+    // this path fire GIS mid-boot would double-drive it.
+    if ((res.status === 401 || res.status === 403) && recoverOnAuthFail) {
+      console.warn('[Remnant] pullFromWorker: auth rejected mid-session; attempting recovery');
+      tryAuthRecovery();
+      return null;
     }
 
     if (!res.ok) return null;
@@ -5328,7 +5337,7 @@ async function boot() {
   // across the IndexedDB/localStorage split rather than a single object.
   const tokenBeforePull = App.data.userToken;
   if (getWorkerUrl()) {
-    const remote = await pullFromWorker();
+    const remote = await pullFromWorker({ recoverOnAuthFail: false });
     if (remote) {
       const { notes: remoteNotes, structure: remoteStructure, scratchpad: remoteScratchpad, ...metadata } = remote;
 
