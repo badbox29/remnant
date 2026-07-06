@@ -334,6 +334,64 @@ function gcTombstones(tombstones) {
   return out;
 }
 
+// mergeGuestBeside(remote, local) — used ONLY when a guest converts into an
+// existing account and chooses to keep their local notes. Guest records are
+// brought in BESIDE the account's, never overwriting: any guest id that
+// collides with an account id is re-issued a fresh id, its display name/title
+// suffixed "(from guest account)", and every internal reference (a book's
+// chapterIds, a chapter's bookId/noteIds, a note's chapterId) is rewritten
+// through the same remap so re-id'd records stay correctly linked. Guest ids
+// that don't collide pass through unchanged (but still have their refs remapped
+// in case a PARENT collided). Union result: account records keep their ids;
+// guest dupes appear as siblings for the user to reconcile by hand.
+function mergeGuestBeside(remote, local) {
+  const SUFFIX = ' (from guest account)';
+  const idMap  = {}; // oldGuestId -> newId, collisions only
+  const remap  = id => (id != null && idMap[id]) || id;
+
+  const alloc = (localObj, remoteObj, prefix) => {
+    for (const id of Object.keys(localObj || {})) {
+      if (remoteObj && remoteObj[id]) idMap[id] = generateId(prefix);
+    }
+  };
+  alloc(local.books,    remote.books,    'b');
+  alloc(local.chapters, remote.chapters, 'c');
+  alloc(local.notes,    remote.notes,    'n');
+
+  const books = { ...(remote.books || {}) };
+  for (const [id, b] of Object.entries(local.books || {})) {
+    const nid = remap(id), collided = nid !== id;
+    books[nid] = {
+      ...b, id: nid,
+      chapterIds: (b.chapterIds || []).map(remap),
+      name: collided ? (b.name || 'Untitled Corpus') + SUFFIX : b.name,
+    };
+  }
+
+  const chapters = { ...(remote.chapters || {}) };
+  for (const [id, c] of Object.entries(local.chapters || {})) {
+    const nid = remap(id), collided = nid !== id;
+    chapters[nid] = {
+      ...c, id: nid,
+      bookId:  c.bookId ? remap(c.bookId) : c.bookId,
+      noteIds: (c.noteIds || []).map(remap),
+      name: collided ? (c.name || 'Untitled Scroll') + SUFFIX : c.name,
+    };
+  }
+
+  const notes = { ...(remote.notes || {}) };
+  for (const [id, n] of Object.entries(local.notes || {})) {
+    const nid = remap(id), collided = nid !== id;
+    notes[nid] = {
+      ...n, id: nid,
+      chapterId: n.chapterId ? remap(n.chapterId) : n.chapterId,
+      title: collided ? (n.title || 'Untitled') + SUFFIX : n.title,
+    };
+  }
+
+  return { notes, books, chapters };
+}
+
 // mergeSyncPayloads(server, local) — reconcile a full payload for WRITING back
 // to the server during pull-before-push. Record collections merge per-id and
 // then have tombstones applied (so a delete this device knows about can't be
@@ -5062,21 +5120,96 @@ document.getElementById('settings-account-btn')?.addEventListener('click', () =>
 
 // ─── Auth callbacks ─────────────────────────────────────────────────
 
-async function onSignedIn(data, isNew) {
-  // If the incoming data carries notes/structure/scratchpad (it came straight
-  // off a KV pull elsewhere in auth.js, e.g. handleGoogleCredential or the
-  // load-existing-token flow), route that content into IndexedDB now rather
-  // than leaving it stranded on the plain metadata object.
+// onSignedIn(data, isNew, opts) — called after any successful sign-in. `data`
+// may carry notes/structure/scratchpad pulled from KV (handleGoogleCredential,
+// token load). How that remote content meets whatever is already in local
+// IndexedDB depends on who is signing in:
+//
+//   • New account (remote empty) — nothing to merge; local carries forward
+//     unchanged (a guest's data becomes the new account's data).
+//   • opts.eraseLocal — the (guest) user explicitly chose to discard local
+//     content and take only the account's copy. Blind replace, intentionally.
+//   • wasGuest (guest → existing account, default "keep") — bring local guest
+//     content in BESIDE the account's via mergeGuestBeside: id collisions are
+//     re-issued and flagged, never overwritten.
+//   • otherwise (re-auth / same-identity sign-in) — reconcile by updatedAt +
+//     tombstones, exactly like boot, so unsynced local edits survive. This is
+//     the path that previously did a blind replaceAll and silently discarded
+//     any work done since the last successful sync when a session re-authed
+//     after Google-token expiry.
+async function onSignedIn(data, isNew, opts = {}) {
+  const wasGuest = (Auth.isGuest?.() ?? false);
   const { notes, structure, scratchpad, ...metadata } = data || {};
-  App.data = mergeData(metadata);
-  if (notes || structure || scratchpad) {
-    await Promise.all([
-      notes ? NotesStore.replaceAll(notes) : Promise.resolve(),
-      structure?.books    ? NotesStore.replaceAllBooks(structure.books)       : Promise.resolve(),
-      structure?.chapters ? NotesStore.replaceAllChapters(structure.chapters) : Promise.resolve(),
-      scratchpad ? NotesStore.setScratchpad(scratchpad.content || '') : Promise.resolve(),
-    ]);
+  const hasRemoteContent = !!(notes || structure || scratchpad);
+
+  // New account (or otherwise contentless payload): keep local as-is.
+  if (!hasRemoteContent) {
+    App.data = mergeData(metadata);
+    saveLocal();
+    await renderAll();
+    showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');
+    pushToWorker();
+    return;
   }
+
+  const remoteNotes    = notes || {};
+  const remoteBooks    = structure?.books    || {};
+  const remoteChapters = structure?.chapters || {};
+
+  const [localNotes, localBooks, localChapters, localPad] = await Promise.all([
+    NotesStore.getAll(), NotesStore.getAllBooks(), NotesStore.getAllChapters(), NotesStore.getScratchpad(),
+  ]);
+
+  let finalNotes, finalBooks, finalChapters;
+
+  if (opts.eraseLocal) {
+    finalNotes = remoteNotes; finalBooks = remoteBooks; finalChapters = remoteChapters;
+    App.data = mergeData(metadata);
+  } else if (wasGuest) {
+    const beside = mergeGuestBeside(
+      { notes: remoteNotes, books: remoteBooks, chapters: remoteChapters },
+      { notes: localNotes,  books: localBooks,  chapters: localChapters  },
+    );
+    finalNotes = beside.notes; finalBooks = beside.books; finalChapters = beside.chapters;
+    App.data = mergeData(metadata);
+  } else {
+    // Same-identity reconcile — mirror of the boot merge.
+    const tombstones = gcTombstones(reconcileTombstones(metadata.tombstones, App.data?.tombstones));
+    finalNotes    = applyTombstones(reconcileById(remoteNotes,    localNotes),    tombstones);
+    finalBooks    = applyTombstones(reconcileById(remoteBooks,    localBooks),    tombstones);
+    finalChapters = applyTombstones(reconcileById(remoteChapters, localChapters), tombstones);
+    App.data = mergeData(metadata);
+    App.data.tombstones = tombstones;
+  }
+
+  await Promise.all([
+    NotesStore.replaceAll(finalNotes),
+    NotesStore.replaceAllBooks(finalBooks),
+    NotesStore.replaceAllChapters(finalChapters),
+  ]);
+
+  // Scratchpad has no id to merge on. Erase → take remote. Guest-keep → append
+  // guest text beneath a marker (nothing lost). Reconcile → newest wins.
+  if (scratchpad) {
+    const remoteContent = scratchpad.content || '';
+    if (opts.eraseLocal) {
+      await NotesStore.setScratchpad(remoteContent);
+    } else if (wasGuest) {
+      const g = (localPad?.content || '').trim();
+      if (g && g !== remoteContent.trim()) {
+        await NotesStore.setScratchpad(
+          remoteContent
+            ? `${remoteContent}\n\n— — — (from guest account) — — —\n\n${localPad.content}`
+            : localPad.content
+        );
+      } else if (!g && remoteContent) {
+        await NotesStore.setScratchpad(remoteContent);
+      }
+    } else if ((scratchpad.updatedAt || 0) > (localPad?.updatedAt || 0)) {
+      await NotesStore.setScratchpad(remoteContent);
+    }
+  }
+
   saveLocal();
   await renderAll();
   showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');

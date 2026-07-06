@@ -213,6 +213,43 @@ const Auth = (() => {
     return getData()?.authMethod === 'token';
   }
 
+  // When a guest converts into an EXISTING account (token or Google), they
+  // choose whether to bring their local guest notes along or discard them.
+  // 'merge' (default) → host reconciles beside the account's data; 'erase' →
+  // host takes only the account's copy. Read at the moment of sign-in so the
+  // async Google-popup callback sees the latest radio state.
+  let _guestMergeChoice = 'merge';
+
+  // guestMergeChoiceHtml() — the keep/discard radio block, shown only when the
+  // current session is a guest (i.e. this sign-in is a conversion). Empty
+  // string for real accounts, so the same load screens stay uncluttered when
+  // re-authing or loading onto a fresh device.
+  function guestMergeChoiceHtml() {
+    if (!isGuest()) return '';
+    return `
+      <div class="form-group" id="auth-guest-merge-group" style="margin-top:.25rem;">
+        <label class="form-label">Your current guest notes</label>
+        <label style="display:flex;gap:.5rem;align-items:flex-start;cursor:pointer;margin-bottom:.45rem;">
+          <input type="radio" name="auth-guest-merge" value="merge" checked style="margin-top:.2rem;"/>
+          <span class="f13 lh">Bring them into this account. Anything that clashes with an existing entry comes in beside it, marked <em>(from guest account)</em> so you can tidy up later.</span>
+        </label>
+        <label style="display:flex;gap:.5rem;align-items:flex-start;cursor:pointer;">
+          <input type="radio" name="auth-guest-merge" value="erase" style="margin-top:.2rem;"/>
+          <span class="f13 lh">Discard them and load only this account's data. <strong>This can't be undone.</strong></span>
+        </label>
+      </div>`;
+  }
+
+  // wireGuestMergeRadios() — reset choice to the safe default and keep
+  // _guestMergeChoice in sync with the radios. Call after any setupScreen()
+  // that includes guestMergeChoiceHtml().
+  function wireGuestMergeRadios() {
+    _guestMergeChoice = 'merge';
+    document.querySelectorAll('input[name="auth-guest-merge"]').forEach(r => {
+      r.addEventListener('change', () => { if (r.checked) _guestMergeChoice = r.value; });
+    });
+  }
+
   // ── GIS (Google Identity Services) readiness ─────────────────────
   // GIS loads via an async script tag. waitForGIS() resolves cleanly
   // whenever the library becomes available, with a 2-second fallback.
@@ -251,6 +288,7 @@ const Auth = (() => {
   // Returns { ok, isNewAccount, profile } on success, null on failure.
   // HOST APP INTERFACE: calls getData(), setData(), mergeData(), onSignedIn(), pushToWorker()
   async function handleGoogleCredential(idToken) {
+    const wasGuest = isGuest(); // captured before any data swap below
     const base = workerBase();
     if(!base) {
       C.toast('Set your Worker URL first.');
@@ -293,7 +331,7 @@ const Auth = (() => {
       merged.workerUrl    = oldWorkerUrl || merged.workerUrl;
       merged.authMethod   = 'google';
       merged.linkedGoogle = profile;
-      C.onSignedIn(merged, false);
+      C.onSignedIn(merged, false, { eraseLocal: wasGuest && _guestMergeChoice === 'erase' });
     } else {
       // New Google account — update current data in place
       const d = getData();
@@ -776,6 +814,7 @@ const Auth = (() => {
         </div>
         <div id="auth-setup-status" style="min-height:1.3rem;font-size:.82rem;margin-top:.35rem;"></div>
       </div>
+      ${guestMergeChoiceHtml()}
       <div id="auth-google-btn-container"
            style="width:100%;min-height:44px;transition:opacity .25s;">
       </div>
@@ -785,6 +824,7 @@ const Auth = (() => {
     `);
 
     document.getElementById('auth-btn-back').addEventListener('click', showSetupLoadChoice);
+    wireGuestMergeRadios();
 
     const workerInput = document.getElementById('auth-setup-worker-url');
     const statusEl    = document.getElementById('auth-setup-status');
@@ -869,6 +909,7 @@ const Auth = (() => {
         <input class="input input-mono" id="auth-setup-token"
                placeholder="Paste your token here…"/>
       </div>
+      ${guestMergeChoiceHtml()}
       <div id="auth-setup-status"
            style="min-height:1.4rem;font-size:.82rem;color:var(--red,#c07070);margin-bottom:.5rem;">
       </div>
@@ -879,6 +920,7 @@ const Auth = (() => {
     `);
 
     document.getElementById('auth-btn-back').addEventListener('click', showSetupLoadChoice);
+    wireGuestMergeRadios();
 
     const workerInput = document.getElementById('auth-setup-worker-url'); // null if pre-filled
     const tokenInput  = document.getElementById('auth-setup-token');
@@ -896,6 +938,7 @@ const Auth = (() => {
     loadBtn.addEventListener('click', async () => {
       const workerUrl = existingWorker || workerInput?.value.trim() || '';
       const token     = tokenInput.value.trim();
+      const eraseLocal = isGuest() && _guestMergeChoice === 'erase';
       loadBtn.disabled = true;
       statusEl.style.color = 'var(--gold2, #b8985a)';
       statusEl.textContent = 'Looking up account…';
@@ -925,7 +968,7 @@ const Auth = (() => {
 
       const merged = C.mergeData(remote);
       merged.workerUrl = workerUrl;
-      C.onSignedIn(merged, false);
+      C.onSignedIn(merged, false, { eraseLocal });
       C.closeModal('modal-account-setup');
       C.startSyncPing();
       C.toast('Account loaded ✓');
