@@ -5313,8 +5313,18 @@ async function boot() {
       const mergedBooks    = applyTombstones(reconcileById(remoteStructure?.books, localBooks), tombstones);
       const mergedChapters = applyTombstones(reconcileById(remoteStructure?.chapters, localChapters), tombstones);
 
+      const wasDirty  = App.data.pendingSync;
+      const localSync = App.data.lastSyncTime;
+
       App.data = mergeData(metadata);
       App.data.tombstones = tombstones; // authoritative merged + GC'd map (mergeData would otherwise take the remote copy alone)
+      // Don't let the server blob's stale pendingSync/lastSyncTime (written at
+      // its last push) mask unsynced local edits the reconcile just preserved —
+      // if we were dirty going in, stay dirty so the next cycle pushes.
+      if (wasDirty) {
+        App.data.pendingSync  = true;
+        App.data.lastSyncTime = localSync;
+      }
       await Promise.all([
         NotesStore.replaceAll(mergedNotes),
         NotesStore.replaceAllBooks(mergedBooks),
