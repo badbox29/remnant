@@ -568,6 +568,40 @@ const Auth = (() => {
     });
   }
 
+  // ── recoverGoogleSession() ───────────────────────────────────────
+  // Mid-session Google ID tokens expire (~1h). When a sync request comes
+  // back 401/403, the host calls this to recover WITHOUT tearing down the
+  // session: first a best-effort silent GIS refresh (no UI); only if that's
+  // suppressed (3p cookies blocked, no active Google session) do we fall back
+  // to the non-destructive showGoogleReauth prompt. On silent success,
+  // handleGoogleCredential restores the token, reconciles, and re-pushes, so
+  // the stalled sync flushes on its own. Returns true if recovered silently.
+  async function recoverGoogleSession() {
+    if(!isGoogleAccount() || !isGoogleAuthAvailable()) return false;
+    await waitForGIS();
+
+    const recovered = await new Promise(resolve => {
+      let settled = false;
+      const done = v => { if(!settled) { settled = true; resolve(v); } };
+      google.accounts.id.initialize({
+        client_id:   C.googleClientId,
+        auto_select: true, // permit silent re-issue for the returning user
+        callback:    async (response) => {
+          google.accounts.id.cancel();
+          const r = await handleGoogleCredential(response.credential);
+          done(!!r?.ok);
+        },
+      });
+      google.accounts.id.prompt(n => {
+        if(n.isNotDisplayed?.() || n.isSkippedMoment?.() || n.isDismissedMoment?.()) done(false);
+      });
+    });
+
+    if(recovered) return true;
+    showGoogleReauth(); // non-destructive fallback prompt
+    return false;
+  }
+
   // ── handlePullMigration() ────────────────────────────────────────
   // Call this inside your pullFromWorker() when the worker returns
   // an X-Token-Migrated header. Silently swaps the local token,
@@ -1485,6 +1519,7 @@ const Auth = (() => {
     showSetupLoadToken,     // S3B enter existing token (call from Settings)
     showGoogleUpgradeFlow,  // token → Google upgrade (call from Settings)
     showGoogleReauth,       // re-auth after session expiry (called automatically by bootCheck)
+    recoverGoogleSession,   // mid-session 401/403 recovery: silent refresh, modal fallback
     showGuestSwitchConfirm, // guest switch/reset (call from Settings)
     showTokenUpgradePrompt, // legacy token upgrade prompt (call from boot)
 

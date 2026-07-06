@@ -416,6 +416,27 @@ function mergeSyncPayloads(server, local) {
   };
 }
 
+// A network interface change (e.g. undocking) can leave a fetch bound to a
+// vanished route hanging indefinitely, latching syncStatus on 'syncing'. Abort
+// sync fetches after a timeout so they reject cleanly and retry next cycle.
+const SYNC_FETCH_TIMEOUT_MS = 15000;
+function fetchWithTimeout(url, opts = {}, ms = SYNC_FETCH_TIMEOUT_MS) {
+  const ac = new AbortController();
+  const t  = setTimeout(() => ac.abort(), ms);
+  return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
+}
+
+// tryAuthRecovery() — a sync request came back 401/403. HMAC/token accounts
+// don't expire this way, so this only applies to Google. Guarded against
+// re-entrancy so stacked sync attempts don't fire multiple GIS prompts.
+async function tryAuthRecovery() {
+  if (App._authRecovering) return;
+  if (!Auth.isGoogleAccount?.()) return;
+  App._authRecovering = true;
+  try { await Auth.recoverGoogleSession(); }
+  finally { App._authRecovering = false; }
+}
+
 async function pushToWorker(attempt = 0) {
   const PUSH_MAX_RETRIES = 3;
   const base  = getWorkerUrl().replace(/\/+$/, '');
@@ -434,7 +455,7 @@ async function pushToWorker(attempt = 0) {
   setSyncStatus('syncing');
   try {
     const getHeaders = await Auth._authHeaders('GET', token, '');
-    const getRes = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
+    const getRes = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
     if (getRes.status === 404) {
       serverBlob = null; // first-ever push for this token — nothing to merge against
     } else if (getRes.ok) {
@@ -447,6 +468,14 @@ async function pushToWorker(attempt = 0) {
       }
       const j = await getRes.json();
       serverBlob = j.value ?? j;
+    } else if (getRes.status === 401 || getRes.status === 403) {
+      // Not a connectivity failure — the session credential expired mid-use.
+      // Data stays saved locally and dirty; recover the session (silent, then
+      // prompt) so the push flushes on its own once re-authed.
+      console.warn('[Remnant] pushToWorker: auth rejected mid-session; attempting recovery');
+      setSyncStatus('offline');
+      tryAuthRecovery();
+      return false;
     } else {
       console.warn(`[Remnant] pushToWorker: pre-push read failed (${getRes.status}); aborting push, staying dirty`);
       setSyncStatus('offline');
@@ -470,7 +499,7 @@ async function pushToWorker(attempt = 0) {
   const body    = JSON.stringify(payload);
   const headers = await Auth._authHeaders('PUT', token, body);
   try {
-    const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, {
+    const res = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Rev': String(baseRev), ...headers },
       body,
@@ -484,6 +513,12 @@ async function pushToWorker(attempt = 0) {
       }
       console.warn('[Remnant] pushToWorker: rev conflict persisted; staying dirty, will retry next cycle');
       setSyncStatus('pending'); // data is safe locally; next sync tries again
+      return false;
+    }
+    if (res.status === 401 || res.status === 403) {
+      console.warn('[Remnant] pushToWorker: auth rejected on write; attempting recovery');
+      setSyncStatus('offline');
+      tryAuthRecovery();
       return false;
     }
     if (res.ok) {
@@ -512,7 +547,7 @@ async function pullFromWorker() {
   if (!token) return null;
   const headers = await Auth._authHeaders('GET', token, '');
   try {
-    const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers });
+    const res = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers });
     if (res.status === 410) {
       // Token was migrated to a Google account on another device.
       App.data.authMethod = 'google';
