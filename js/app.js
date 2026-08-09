@@ -334,64 +334,6 @@ function gcTombstones(tombstones) {
   return out;
 }
 
-// mergeGuestBeside(remote, local) — used ONLY when a guest converts into an
-// existing account and chooses to keep their local notes. Guest records are
-// brought in BESIDE the account's, never overwriting: any guest id that
-// collides with an account id is re-issued a fresh id, its display name/title
-// suffixed "(from guest account)", and every internal reference (a book's
-// chapterIds, a chapter's bookId/noteIds, a note's chapterId) is rewritten
-// through the same remap so re-id'd records stay correctly linked. Guest ids
-// that don't collide pass through unchanged (but still have their refs remapped
-// in case a PARENT collided). Union result: account records keep their ids;
-// guest dupes appear as siblings for the user to reconcile by hand.
-function mergeGuestBeside(remote, local) {
-  const SUFFIX = ' (from guest account)';
-  const idMap  = {}; // oldGuestId -> newId, collisions only
-  const remap  = id => (id != null && idMap[id]) || id;
-
-  const alloc = (localObj, remoteObj, prefix) => {
-    for (const id of Object.keys(localObj || {})) {
-      if (remoteObj && remoteObj[id]) idMap[id] = generateId(prefix);
-    }
-  };
-  alloc(local.books,    remote.books,    'b');
-  alloc(local.chapters, remote.chapters, 'c');
-  alloc(local.notes,    remote.notes,    'n');
-
-  const books = { ...(remote.books || {}) };
-  for (const [id, b] of Object.entries(local.books || {})) {
-    const nid = remap(id), collided = nid !== id;
-    books[nid] = {
-      ...b, id: nid,
-      chapterIds: (b.chapterIds || []).map(remap),
-      name: collided ? (b.name || 'Untitled Corpus') + SUFFIX : b.name,
-    };
-  }
-
-  const chapters = { ...(remote.chapters || {}) };
-  for (const [id, c] of Object.entries(local.chapters || {})) {
-    const nid = remap(id), collided = nid !== id;
-    chapters[nid] = {
-      ...c, id: nid,
-      bookId:  c.bookId ? remap(c.bookId) : c.bookId,
-      noteIds: (c.noteIds || []).map(remap),
-      name: collided ? (c.name || 'Untitled Scroll') + SUFFIX : c.name,
-    };
-  }
-
-  const notes = { ...(remote.notes || {}) };
-  for (const [id, n] of Object.entries(local.notes || {})) {
-    const nid = remap(id), collided = nid !== id;
-    notes[nid] = {
-      ...n, id: nid,
-      chapterId: n.chapterId ? remap(n.chapterId) : n.chapterId,
-      title: collided ? (n.title || 'Untitled') + SUFFIX : n.title,
-    };
-  }
-
-  return { notes, books, chapters };
-}
-
 // mergeSyncPayloads(server, local) — reconcile a full payload for WRITING back
 // to the server during pull-before-push. Record collections merge per-id and
 // then have tombstones applied (so a delete this device knows about can't be
@@ -416,27 +358,6 @@ function mergeSyncPayloads(server, local) {
   };
 }
 
-// A network interface change (e.g. undocking) can leave a fetch bound to a
-// vanished route hanging indefinitely, latching syncStatus on 'syncing'. Abort
-// sync fetches after a timeout so they reject cleanly and retry next cycle.
-const SYNC_FETCH_TIMEOUT_MS = 15000;
-function fetchWithTimeout(url, opts = {}, ms = SYNC_FETCH_TIMEOUT_MS) {
-  const ac = new AbortController();
-  const t  = setTimeout(() => ac.abort(), ms);
-  return fetch(url, { ...opts, signal: ac.signal }).finally(() => clearTimeout(t));
-}
-
-// tryAuthRecovery() — a sync request came back 401/403. HMAC/token accounts
-// don't expire this way, so this only applies to Google. Guarded against
-// re-entrancy so stacked sync attempts don't fire multiple GIS prompts.
-async function tryAuthRecovery() {
-  if (App._authRecovering) return;
-  if (!Auth.isGoogleAccount?.()) return;
-  App._authRecovering = true;
-  try { await Auth.recoverGoogleSession(); }
-  finally { App._authRecovering = false; }
-}
-
 async function pushToWorker(attempt = 0) {
   const PUSH_MAX_RETRIES = 3;
   const base  = getWorkerUrl().replace(/\/+$/, '');
@@ -455,7 +376,7 @@ async function pushToWorker(attempt = 0) {
   setSyncStatus('syncing');
   try {
     const getHeaders = await Auth._authHeaders('GET', token, '');
-    const getRes = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
+    const getRes = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
     if (getRes.status === 404) {
       serverBlob = null; // first-ever push for this token — nothing to merge against
     } else if (getRes.ok) {
@@ -468,14 +389,6 @@ async function pushToWorker(attempt = 0) {
       }
       const j = await getRes.json();
       serverBlob = j.value ?? j;
-    } else if (getRes.status === 401 || getRes.status === 403) {
-      // Not a connectivity failure — the session credential expired mid-use.
-      // Data stays saved locally and dirty; recover the session (silent, then
-      // prompt) so the push flushes on its own once re-authed.
-      console.warn('[Remnant] pushToWorker: auth rejected mid-session; attempting recovery');
-      setSyncStatus('offline');
-      tryAuthRecovery();
-      return false;
     } else {
       console.warn(`[Remnant] pushToWorker: pre-push read failed (${getRes.status}); aborting push, staying dirty`);
       setSyncStatus('offline');
@@ -499,7 +412,7 @@ async function pushToWorker(attempt = 0) {
   const body    = JSON.stringify(payload);
   const headers = await Auth._authHeaders('PUT', token, body);
   try {
-    const res = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, {
+    const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Rev': String(baseRev), ...headers },
       body,
@@ -513,12 +426,6 @@ async function pushToWorker(attempt = 0) {
       }
       console.warn('[Remnant] pushToWorker: rev conflict persisted; staying dirty, will retry next cycle');
       setSyncStatus('pending'); // data is safe locally; next sync tries again
-      return false;
-    }
-    if (res.status === 401 || res.status === 403) {
-      console.warn('[Remnant] pushToWorker: auth rejected on write; attempting recovery');
-      setSyncStatus('offline');
-      tryAuthRecovery();
       return false;
     }
     if (res.ok) {
@@ -540,14 +447,14 @@ async function pushToWorker(attempt = 0) {
   }
 }
 
-async function pullFromWorker({ recoverOnAuthFail = true } = {}) {
+async function pullFromWorker() {
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return null;
   const token   = App.data?.userToken;
   if (!token) return null;
   const headers = await Auth._authHeaders('GET', token, '');
   try {
-    const res = await fetchWithTimeout(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers });
+    const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers });
     if (res.status === 410) {
       // Token was migrated to a Google account on another device.
       App.data.authMethod = 'google';
@@ -570,15 +477,6 @@ async function pullFromWorker({ recoverOnAuthFail = true } = {}) {
       ]);
       saveLocal();
       return remote;
-    }
-
-    // Mid-session credential expiry. Boot opts out (recoverOnAuthFail:false) —
-    // there, bootCheck owns reauth and drives it in the correct order; letting
-    // this path fire GIS mid-boot would double-drive it.
-    if ((res.status === 401 || res.status === 403) && recoverOnAuthFail) {
-      console.warn('[Remnant] pullFromWorker: auth rejected mid-session; attempting recovery');
-      tryAuthRecovery();
-      return null;
     }
 
     if (!res.ok) return null;
@@ -4416,8 +4314,7 @@ titleInputEl?.addEventListener('keydown', (e) => {
   }
 });
 
-// Mobile pop-out toggle. No-op on desktop (button is CSS-hidden there,
-// but harmless if clicked since the column is already always visible).
+// Pop-out drawer toggle — same behavior at every viewport width.
 function setScratchpadOpen(open) {
   document.getElementById('scratchpad-column')?.classList.toggle('open', open);
 }
@@ -5164,96 +5061,21 @@ document.getElementById('settings-account-btn')?.addEventListener('click', () =>
 
 // ─── Auth callbacks ─────────────────────────────────────────────────
 
-// onSignedIn(data, isNew, opts) — called after any successful sign-in. `data`
-// may carry notes/structure/scratchpad pulled from KV (handleGoogleCredential,
-// token load). How that remote content meets whatever is already in local
-// IndexedDB depends on who is signing in:
-//
-//   • New account (remote empty) — nothing to merge; local carries forward
-//     unchanged (a guest's data becomes the new account's data).
-//   • opts.eraseLocal — the (guest) user explicitly chose to discard local
-//     content and take only the account's copy. Blind replace, intentionally.
-//   • wasGuest (guest → existing account, default "keep") — bring local guest
-//     content in BESIDE the account's via mergeGuestBeside: id collisions are
-//     re-issued and flagged, never overwritten.
-//   • otherwise (re-auth / same-identity sign-in) — reconcile by updatedAt +
-//     tombstones, exactly like boot, so unsynced local edits survive. This is
-//     the path that previously did a blind replaceAll and silently discarded
-//     any work done since the last successful sync when a session re-authed
-//     after Google-token expiry.
-async function onSignedIn(data, isNew, opts = {}) {
-  const wasGuest = (Auth.isGuest?.() ?? false);
+async function onSignedIn(data, isNew) {
+  // If the incoming data carries notes/structure/scratchpad (it came straight
+  // off a KV pull elsewhere in auth.js, e.g. handleGoogleCredential or the
+  // load-existing-token flow), route that content into IndexedDB now rather
+  // than leaving it stranded on the plain metadata object.
   const { notes, structure, scratchpad, ...metadata } = data || {};
-  const hasRemoteContent = !!(notes || structure || scratchpad);
-
-  // New account (or otherwise contentless payload): keep local as-is.
-  if (!hasRemoteContent) {
-    App.data = mergeData(metadata);
-    saveLocal();
-    await renderAll();
-    showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');
-    pushToWorker();
-    return;
+  App.data = mergeData(metadata);
+  if (notes || structure || scratchpad) {
+    await Promise.all([
+      notes ? NotesStore.replaceAll(notes) : Promise.resolve(),
+      structure?.books    ? NotesStore.replaceAllBooks(structure.books)       : Promise.resolve(),
+      structure?.chapters ? NotesStore.replaceAllChapters(structure.chapters) : Promise.resolve(),
+      scratchpad ? NotesStore.setScratchpad(scratchpad.content || '') : Promise.resolve(),
+    ]);
   }
-
-  const remoteNotes    = notes || {};
-  const remoteBooks    = structure?.books    || {};
-  const remoteChapters = structure?.chapters || {};
-
-  const [localNotes, localBooks, localChapters, localPad] = await Promise.all([
-    NotesStore.getAll(), NotesStore.getAllBooks(), NotesStore.getAllChapters(), NotesStore.getScratchpad(),
-  ]);
-
-  let finalNotes, finalBooks, finalChapters;
-
-  if (opts.eraseLocal) {
-    finalNotes = remoteNotes; finalBooks = remoteBooks; finalChapters = remoteChapters;
-    App.data = mergeData(metadata);
-  } else if (wasGuest) {
-    const beside = mergeGuestBeside(
-      { notes: remoteNotes, books: remoteBooks, chapters: remoteChapters },
-      { notes: localNotes,  books: localBooks,  chapters: localChapters  },
-    );
-    finalNotes = beside.notes; finalBooks = beside.books; finalChapters = beside.chapters;
-    App.data = mergeData(metadata);
-  } else {
-    // Same-identity reconcile — mirror of the boot merge.
-    const tombstones = gcTombstones(reconcileTombstones(metadata.tombstones, App.data?.tombstones));
-    finalNotes    = applyTombstones(reconcileById(remoteNotes,    localNotes),    tombstones);
-    finalBooks    = applyTombstones(reconcileById(remoteBooks,    localBooks),    tombstones);
-    finalChapters = applyTombstones(reconcileById(remoteChapters, localChapters), tombstones);
-    App.data = mergeData(metadata);
-    App.data.tombstones = tombstones;
-  }
-
-  await Promise.all([
-    NotesStore.replaceAll(finalNotes),
-    NotesStore.replaceAllBooks(finalBooks),
-    NotesStore.replaceAllChapters(finalChapters),
-  ]);
-
-  // Scratchpad has no id to merge on. Erase → take remote. Guest-keep → append
-  // guest text beneath a marker (nothing lost). Reconcile → newest wins.
-  if (scratchpad) {
-    const remoteContent = scratchpad.content || '';
-    if (opts.eraseLocal) {
-      await NotesStore.setScratchpad(remoteContent);
-    } else if (wasGuest) {
-      const g = (localPad?.content || '').trim();
-      if (g && g !== remoteContent.trim()) {
-        await NotesStore.setScratchpad(
-          remoteContent
-            ? `${remoteContent}\n\n— — — (from guest account) — — —\n\n${localPad.content}`
-            : localPad.content
-        );
-      } else if (!g && remoteContent) {
-        await NotesStore.setScratchpad(remoteContent);
-      }
-    } else if ((scratchpad.updatedAt || 0) > (localPad?.updatedAt || 0)) {
-      await NotesStore.setScratchpad(remoteContent);
-    }
-  }
-
   saveLocal();
   await renderAll();
   showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');
@@ -5337,7 +5159,7 @@ async function boot() {
   // across the IndexedDB/localStorage split rather than a single object.
   const tokenBeforePull = App.data.userToken;
   if (getWorkerUrl()) {
-    const remote = await pullFromWorker({ recoverOnAuthFail: false });
+    const remote = await pullFromWorker();
     if (remote) {
       const { notes: remoteNotes, structure: remoteStructure, scratchpad: remoteScratchpad, ...metadata } = remote;
 
@@ -5357,18 +5179,8 @@ async function boot() {
       const mergedBooks    = applyTombstones(reconcileById(remoteStructure?.books, localBooks), tombstones);
       const mergedChapters = applyTombstones(reconcileById(remoteStructure?.chapters, localChapters), tombstones);
 
-      const wasDirty  = App.data.pendingSync;
-      const localSync = App.data.lastSyncTime;
-
       App.data = mergeData(metadata);
       App.data.tombstones = tombstones; // authoritative merged + GC'd map (mergeData would otherwise take the remote copy alone)
-      // Don't let the server blob's stale pendingSync/lastSyncTime (written at
-      // its last push) mask unsynced local edits the reconcile just preserved —
-      // if we were dirty going in, stay dirty so the next cycle pushes.
-      if (wasDirty) {
-        App.data.pendingSync  = true;
-        App.data.lastSyncTime = localSync;
-      }
       await Promise.all([
         NotesStore.replaceAll(mergedNotes),
         NotesStore.replaceAllBooks(mergedBooks),
