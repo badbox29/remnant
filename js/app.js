@@ -210,17 +210,86 @@ function setSyncStatus(s) {
   updateSyncIndicator();
 }
 
+// Sync states and their user-facing copy. 'signed-out' is deliberately
+// distinct from 'offline': an expired or rejected credential is NOT a dropped
+// connection, and telling the user "changes saved here" when their session is
+// dead is the reassurance that gets data lost. It also renders differently
+// (see .sync-indicator[data-state="signed-out"] in styles.css) and does not
+// pulse away like the transient states.
+const SYNC_STATE_LABELS = {
+  synced:       'Synced',
+  pending:      'Unsynced changes',
+  syncing:      'Syncing…',
+  offline:      'Offline — changes saved here',
+  'signed-out': 'Signed out · not syncing',
+};
+
 function updateSyncIndicator() {
-  const wrap = document.getElementById('sync-wrap');
-  if (!wrap) return;
+  // NOTE: the element in index.html is #sync-indicator. This previously
+  // looked up #sync-wrap, which does not exist, so every call returned early
+  // and the indicator was permanently hidden — no sync state has ever been
+  // visible to the user.
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
   // The dot only means anything when syncing is actually configured. Guests
   // and local-only setups have nothing to sync, so hide it entirely.
-  if (Auth.isGuest?.() || !getWorkerUrl()) { wrap.style.display = 'none'; return; }
-  wrap.style.display = '';
+  if (Auth.isGuest?.() || !getWorkerUrl()) { el.style.display = 'none'; return; }
+  el.style.display = '';
   const state = App.syncStatus || (App.data?.pendingSync ? 'pending' : 'synced');
-  wrap.dataset.state = state;
-  const label = { synced: 'Synced', pending: 'Unsynced changes', syncing: 'Syncing…', offline: 'Offline — changes saved here' }[state] || '';
-  wrap.setAttribute('aria-label', `Sync: ${label}`);
+  el.dataset.state = state;
+  const label = SYNC_STATE_LABELS[state] || '';
+  el.setAttribute('aria-label', `Sync: ${label}`);
+  el.setAttribute('title', label);
+  // The signed-out state is the only one worth interrupting for, and it needs
+  // to be actionable rather than decorative.
+  el.textContent = (state === 'signed-out') ? '⚠' : '●';
+  el.style.cursor = (state === 'signed-out') ? 'pointer' : '';
+}
+
+// Clicking the indicator while signed out starts re-auth. Every other state is
+// informational only.
+document.getElementById('sync-indicator')?.addEventListener('click', () => {
+  if (App.syncStatus === 'signed-out') handleTerminalAuth();
+});
+
+// ─── Auth failure handling ────────────────────────────────────────
+//
+// A 401/403 is not a network failure. Treating them the same means an expired
+// credential shows the same chip as a dropped connection, and the periodic
+// sync ping then retries the dead token forever, learning nothing. These are
+// terminal until re-auth succeeds: stop the loop, show a distinct state, and
+// try the request again exactly once if recovery works.
+
+let _authRecovery = null;
+
+async function handleTerminalAuth() {
+  if (!_authRecovery) {
+    setSyncStatus('syncing');
+    _authRecovery = Auth.handleAuthFailure()
+      .catch(e => { console.error('[Remnant] auth recovery threw:', e); return false; })
+      .finally(() => { _authRecovery = null; });
+  }
+  const ok = await _authRecovery;
+  if (ok) {
+    App.authFailed = false;
+    setSyncStatus(App.data?.pendingSync ? 'pending' : 'synced');
+  } else {
+    App.authFailed = true;
+    setSyncStatus('signed-out');
+  }
+  return ok;
+}
+
+function isAuthStatus(status) {
+  return status === 401 || status === 403;
+}
+
+// Called whenever _authHeaders() comes back null — we could not produce a
+// credential at all, so there is no point making the request.
+function noteMissingCredentials(where) {
+  console.error(`[Remnant] ${where}: could not build auth headers; not sending an unsigned request`);
+  App.authFailed = true;
+  setSyncStatus('signed-out');
 }
 
 // reportPersist(ok, msg) — surface a failed IndexedDB write to the user.
@@ -358,7 +427,7 @@ function mergeSyncPayloads(server, local) {
   };
 }
 
-async function pushToWorker(attempt = 0) {
+async function pushToWorker(attempt = 0, authRetried = false) {
   const PUSH_MAX_RETRIES = 3;
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return false;
@@ -376,7 +445,15 @@ async function pushToWorker(attempt = 0) {
   setSyncStatus('syncing');
   try {
     const getHeaders = await Auth._authHeaders('GET', token, '');
+    if (!getHeaders) { noteMissingCredentials('pushToWorker pre-push read'); return false; }
     const getRes = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers: getHeaders });
+    if (isAuthStatus(getRes.status)) {
+      // Terminal, not transient. Recover once, then retry the whole push.
+      if (!authRetried && await handleTerminalAuth()) return pushToWorker(attempt, true);
+      App.authFailed = true;
+      setSyncStatus('signed-out');
+      return false;
+    }
     if (getRes.status === 404) {
       serverBlob = null; // first-ever push for this token — nothing to merge against
     } else if (getRes.ok) {
@@ -411,12 +488,19 @@ async function pushToWorker(attempt = 0) {
   const payload = serverBlob ? mergeSyncPayloads(serverBlob, local) : local;
   const body    = JSON.stringify(payload);
   const headers = await Auth._authHeaders('PUT', token, body);
+  if (!headers) { noteMissingCredentials('pushToWorker'); return false; }
   try {
     const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, {
       method:  'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Rev': String(baseRev), ...headers },
       body,
     });
+    if (isAuthStatus(res.status)) {
+      if (!authRetried && await handleTerminalAuth()) return pushToWorker(attempt, true);
+      App.authFailed = true;
+      setSyncStatus('signed-out');
+      return false;
+    }
     if (res.status === 409) {
       // Someone else wrote between our read and this write. Re-pull, re-merge,
       // retry a bounded number of times before backing off to the next cycle.
@@ -429,6 +513,7 @@ async function pushToWorker(attempt = 0) {
       return false;
     }
     if (res.ok) {
+      App.authFailed        = false;
       App.data.pendingSync  = false;
       App.data.lastSyncTime = Date.now();
       saveLocal();
@@ -447,14 +532,24 @@ async function pushToWorker(attempt = 0) {
   }
 }
 
-async function pullFromWorker() {
+async function pullFromWorker(authRetried = false) {
   const base  = getWorkerUrl().replace(/\/+$/, '');
   if (!base) return null;
   const token   = App.data?.userToken;
   if (!token) return null;
   const headers = await Auth._authHeaders('GET', token, '');
+  if (!headers) { noteMissingCredentials('pullFromWorker'); return null; }
   try {
     const res = await fetch(`${base}/storage/${encodeURIComponent(token)}/profile`, { headers });
+    if (isAuthStatus(res.status)) {
+      // Previously this fell through to `if (!res.ok) return null`, making an
+      // expired credential indistinguishable from "this account has no remote
+      // data yet" — boot would then continue as though the account were empty.
+      if (!authRetried && await handleTerminalAuth()) return pullFromWorker(true);
+      App.authFailed = true;
+      setSyncStatus('signed-out');
+      return null;
+    }
     if (res.status === 410) {
       // Token was migrated to a Google account on another device.
       App.data.authMethod = 'google';
@@ -491,6 +586,9 @@ async function pullFromWorker() {
 function shouldSync() {
   if (Auth.isGuest()) return false;
   if (!getWorkerUrl()) return false;
+  // Auth failure is terminal until re-auth succeeds. Retrying a dead
+  // credential every 60s learns nothing and just buries the real signal.
+  if (App.authFailed) return false;
   if (!App.data.pendingSync) return false;
   return (Date.now() - (App.data.lastSyncTime || 0)) >= SYNC_THRESHOLD_MS;
 }
@@ -513,6 +611,7 @@ function startSyncPing() {
 function bestEffortPushOnHide() {
   if (Auth.isGuest()) return;
   if (!getWorkerUrl()) return;
+  if (App.authFailed) return;
   if (!App.data.pendingSync) return;
   // Fire and forget — we cannot await this once the page is unloading.
   pushToWorker();
@@ -526,7 +625,7 @@ function bestEffortPushOnHide() {
 // an in-progress, not-yet-autosaved edit. Open tabs keep their in-memory copy
 // and reconcile on their next save; only the nav/structure updates live.
 async function pullMergeOnFocus() {
-  if (Auth.isGuest() || !getWorkerUrl()) return;
+  if (Auth.isGuest() || !getWorkerUrl() || App.authFailed) return;
   if (Date.now() - (App._lastFocusPullAt || 0) < 30000) return; // at most once per 30s
   App._lastFocusPullAt = Date.now();
   setSyncStatus('syncing');
@@ -556,7 +655,8 @@ async function pullMergeOnFocus() {
   } catch (e) {
     console.warn('[Remnant] pull-on-focus failed:', e);
   } finally {
-    setSyncStatus(App.data.pendingSync ? 'pending' : 'synced');
+    // Don't paint over a terminal auth state with a reassuring one.
+    if (!App.authFailed) setSyncStatus(App.data.pendingSync ? 'pending' : 'synced');
   }
 }
 
@@ -5061,24 +5161,76 @@ document.getElementById('settings-account-btn')?.addEventListener('click', () =>
 
 // ─── Auth callbacks ─────────────────────────────────────────────────
 
-async function onSignedIn(data, isNew) {
+// onSignedIn(data, isNew, opts)
+//
+// opts.keepLocal  — auth decided local data is authoritative (unsynced changes
+//                   or a newer local timestamp). Adopt the identity metadata
+//                   only and leave the content stores completely alone.
+// opts.eraseLocal — the user explicitly chose to discard their guest notes and
+//                   take only this account's copy. Destructive by request.
+// default         — remote content is applied, but RECONCILED against what is
+//                   already here rather than replacing it outright.
+//
+// The third argument was previously not declared at all, so the guest
+// keep/discard choice was silently dropped and every sign-in ran the
+// destructive replaceAll path.
+async function onSignedIn(data, isNew, opts = {}) {
+  const { keepLocal = false, eraseLocal = false } = opts;
+
   // If the incoming data carries notes/structure/scratchpad (it came straight
   // off a KV pull elsewhere in auth.js, e.g. handleGoogleCredential or the
   // load-existing-token flow), route that content into IndexedDB now rather
   // than leaving it stranded on the plain metadata object.
   const { notes, structure, scratchpad, ...metadata } = data || {};
+
+  const localTombstones = App.data?.tombstones;
   App.data = mergeData(metadata);
-  if (notes || structure || scratchpad) {
+
+  const hasRemoteContent = !!(notes || structure || scratchpad);
+
+  if (keepLocal) {
+    // Identity swap only. Nothing touches the content stores; the push below
+    // reconciles this device's data against the server copy.
+    App.data.tombstones = localTombstones || App.data.tombstones;
+    App.data.pendingSync = true; // local has something the server doesn't
+  } else if (hasRemoteContent && eraseLocal) {
+    // Explicit discard — remote wins outright.
     await Promise.all([
-      notes ? NotesStore.replaceAll(notes) : Promise.resolve(),
-      structure?.books    ? NotesStore.replaceAllBooks(structure.books)       : Promise.resolve(),
-      structure?.chapters ? NotesStore.replaceAllChapters(structure.chapters) : Promise.resolve(),
-      scratchpad ? NotesStore.setScratchpad(scratchpad.content || '') : Promise.resolve(),
+      notes ? NotesStore.replaceAll(notes) : NotesStore.replaceAll({}),
+      structure?.books    ? NotesStore.replaceAllBooks(structure.books)       : NotesStore.replaceAllBooks({}),
+      structure?.chapters ? NotesStore.replaceAllChapters(structure.chapters) : NotesStore.replaceAllChapters({}),
+      NotesStore.setScratchpad((scratchpad && scratchpad.content) || ''),
     ]);
+  } else if (hasRemoteContent) {
+    // Default: fold remote in beside what's here. Same reconcile the boot path
+    // and pull-before-push use — newest updatedAt wins, ties to this device,
+    // then tombstones bury anything deleted elsewhere.
+    const [localNotes, localBooks, localChapters] = await Promise.all([
+      NotesStore.getAll(), NotesStore.getAllBooks(), NotesStore.getAllChapters(),
+    ]);
+    const tombstones = gcTombstones(reconcileTombstones(data?.tombstones, localTombstones));
+    App.data.tombstones = tombstones;
+
+    await Promise.all([
+      NotesStore.replaceAll(applyTombstones(reconcileById(notes, localNotes), tombstones)),
+      NotesStore.replaceAllBooks(applyTombstones(reconcileById(structure?.books, localBooks), tombstones)),
+      NotesStore.replaceAllChapters(applyTombstones(reconcileById(structure?.chapters, localChapters), tombstones)),
+    ]);
+
+    const localPad = await NotesStore.getScratchpad();
+    if (scratchpad && (!localPad || (scratchpad.updatedAt || 0) > (localPad.updatedAt || 0))) {
+      await NotesStore.setScratchpad(scratchpad.content || '');
+    }
   }
+
+  App.authFailed = false;
   saveLocal();
   await renderAll();
-  showToast(isNew ? 'Welcome to Remnant 📜' : 'Welcome back — syncing your remnants…');
+  showToast(
+    isNew      ? 'Welcome to Remnant 📜'
+    : keepLocal ? 'Welcome back — keeping this device\u2019s notes and syncing them up…'
+                : 'Welcome back — syncing your remnants…'
+  );
   pushToWorker();
 }
 
@@ -5134,6 +5286,9 @@ async function boot() {
     getData:           () => App.data,
     setData:           (d) => { App.data = d; saveLocal(); },
     mergeData,
+    // Explicit accessors so auth.js doesn't have to guess this app's field
+    // names when deciding whether local data is safe to overwrite.
+    isSyncDirty:       () => !!App.data?.pendingSync,
     onSignedIn,
     onGuestReady,
     onSessionExpired:  () => {},
