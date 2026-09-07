@@ -215,6 +215,36 @@ button, input, textarea { font-family: inherit; font-size: inherit; color: inher
 }
 @keyframes pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
 
+/* Sync states. The transient ones stay quiet and brass-toned — they're
+   informational and shouldn't compete with the page. */
+.sync-indicator[data-state="synced"]  { color: var(--brass); animation: none; opacity: .45; }
+.sync-indicator[data-state="pending"] { color: var(--brass); animation: pulse 2s ease-in-out infinite; }
+.sync-indicator[data-state="syncing"] { color: var(--brass); animation: pulse 1s ease-in-out infinite; }
+.sync-indicator[data-state="offline"] { color: var(--muted); animation: none; opacity: .8; }
+
+/* Signed out is categorically different from offline: the session is dead,
+   nothing is syncing, and no amount of waiting fixes it. It gets its own
+   colour, a larger glyph, a persistent chip and no pulse-to-transparent, so
+   it reads as a standing condition rather than a passing blip. It is not
+   dismissible — it clears only when re-auth succeeds. */
+.sync-indicator[data-state="signed-out"] {
+  color: var(--red);
+  font-size: .82rem;
+  line-height: 1;
+  opacity: 1;
+  animation: none;
+  padding: .12rem .4rem;
+  border: 1px solid var(--red);
+  border-radius: var(--r-sm);
+}
+.sync-indicator[data-state="signed-out"]:hover {
+  color: var(--paper);
+  background: var(--red);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sync-indicator { animation: none !important; }
+}
+
 /* ── Buttons ─────────────────────────────────────────────────────── */
 
 .btn {
